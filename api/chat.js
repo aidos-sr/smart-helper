@@ -1,15 +1,25 @@
 import { createClient } from '@supabase/supabase-js';
 
-const MODEL = process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free';
+const FAST_MODEL = process.env.OPENROUTER_FAST_MODEL || 'inclusionai/ling-3.0-flash:free';
+const FAST_FALLBACK_MODEL =
+  process.env.OPENROUTER_FAST_FALLBACK_MODEL || 'google/gemma-4-31b-it:free';
+const DEEP_MODEL =
+  process.env.OPENROUTER_DEEP_MODEL ||
+  process.env.OPENROUTER_MODEL ||
+  'nvidia/nemotron-3-ultra-550b-a55b:free';
+const DEEP_FALLBACK_MODEL =
+  process.env.OPENROUTER_DEEP_FALLBACK_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free';
 const STRUCTURED_MODEL =
   process.env.OPENROUTER_STRUCTURED_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free';
+const STRUCTURED_FALLBACK_MODEL =
+  process.env.OPENROUTER_STRUCTURED_FALLBACK_MODEL || 'google/gemma-4-31b-it:free';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_TIMEOUT_MS = 45_000;
 const WEB_SEARCH_TIMEOUT_MS = 5_000;
 const WEB_CACHE_TTL_MS = 10 * 60_000;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_INPUT_CHARS = 12_000;
 const MAX_CHAT_CHARS = 30_000;
+const RETRYABLE_UPSTREAM_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
 const MODE_PROMPTS = Object.freeze({
   general:
@@ -223,30 +233,35 @@ async function searchWikipedia(query, language) {
 
 async function getOnlineSources(query) {
   const normalizedQuery = asText(query, 500);
-  if (!normalizedQuery) return [];
+  if (!normalizedQuery) return { sources: [], status: 'no_results' };
 
   const cacheKey = normalizedQuery.toLocaleLowerCase();
   const cached = webCache.get(cacheKey);
-  if (cached?.expiresAt > Date.now()) return cached.sources;
+  if (cached?.expiresAt > Date.now()) return cached.result;
 
   const searches = await Promise.allSettled(
     getWikipediaLanguages(normalizedQuery).map((language) =>
       searchWikipedia(normalizedQuery, language)
     )
   );
+  const fulfilled = searches.filter((result) => result.status === 'fulfilled');
   const seen = new Set();
-  const sources = searches
-    .flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
+  const sources = fulfilled
+    .flatMap((result) => result.value)
     .filter((source) => {
       if (seen.has(source.url)) return false;
       seen.add(source.url);
       return true;
     })
     .slice(0, 4);
+  const result = {
+    sources,
+    status: fulfilled.length ? (sources.length ? 'ok' : 'no_results') : 'unavailable'
+  };
 
   if (webCache.size >= 50) webCache.delete(webCache.keys().next().value);
-  webCache.set(cacheKey, { sources, expiresAt: Date.now() + WEB_CACHE_TTL_MS });
-  return sources;
+  webCache.set(cacheKey, { result, expiresAt: Date.now() + WEB_CACHE_TTL_MS });
+  return result;
 }
 
 function addOnlineContext(modelRequest, sources) {
@@ -296,6 +311,7 @@ async function authenticate(req) {
 }
 
 async function consumeQuota(uid) {
+  const reservedAt = Date.now();
   const minuteLimit = asBoundedInt(process.env.AI_MINUTE_LIMIT, 1, 100, 10);
   const dailyLimit = asBoundedInt(process.env.AI_DAILY_LIMIT, 1, 10_000, 50);
   const { data, error } = await getSupabaseAdmin().rpc('consume_ai_quota', {
@@ -315,8 +331,55 @@ async function consumeQuota(uid) {
     minuteLimit,
     dailyLimit,
     minuteRemaining: Number(usage.minute_remaining || 0),
-    dailyRemaining: Number(usage.daily_remaining || 0)
+    dailyRemaining: Number(usage.daily_remaining || 0),
+    reservationDay: new Date(reservedAt).toISOString().slice(0, 10),
+    reservationMinute: Math.floor(reservedAt / 60_000)
   };
+}
+
+async function refundQuota(uid, reservation) {
+  if (!reservation?.allowed) return;
+  const admin = getSupabaseAdmin();
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: usage, error: readError } = await admin
+      .from('ai_usage')
+      .select('day_key,day_count,minute_key,minute_count')
+      .eq('user_id', uid)
+      .maybeSingle();
+    if (readError) throw readError;
+    if (!usage) return;
+
+    const sameDay = usage.day_key === reservation.reservationDay;
+    const sameMinute = Number(usage.minute_key) === reservation.reservationMinute;
+    if (!sameDay && !sameMinute) return;
+
+    const nextDayCount = sameDay
+      ? Math.max(0, Number(usage.day_count) - 1)
+      : Number(usage.day_count);
+    const nextMinuteCount = sameMinute
+      ? Math.max(0, Number(usage.minute_count) - 1)
+      : Number(usage.minute_count);
+
+    const { data: updated, error: updateError } = await admin
+      .from('ai_usage')
+      .update({
+        day_count: nextDayCount,
+        minute_count: nextMinuteCount,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', uid)
+      .eq('day_key', usage.day_key)
+      .eq('day_count', usage.day_count)
+      .eq('minute_key', usage.minute_key)
+      .eq('minute_count', usage.minute_count)
+      .select('user_id')
+      .maybeSingle();
+    if (updateError) throw updateError;
+    if (updated) return;
+  }
+
+  throw new Error('Quota refund conflicted too many times');
 }
 
 function buildChatRequest(body) {
@@ -432,6 +495,118 @@ function buildModelRequest(body) {
   throw new Error('UNKNOWN_TASK');
 }
 
+function getModelAttempts(task, isStructured, deep) {
+  const attempts = isStructured
+    ? [
+        { model: STRUCTURED_MODEL, timeoutMs: 22_000 },
+        { model: STRUCTURED_FALLBACK_MODEL, timeoutMs: 18_000 }
+      ]
+    : task === 'chat' && deep
+      ? [
+          { model: DEEP_MODEL, timeoutMs: 28_000 },
+          { model: DEEP_FALLBACK_MODEL, timeoutMs: 16_000 }
+        ]
+      : [
+          { model: FAST_MODEL, timeoutMs: 18_000 },
+          { model: FAST_FALLBACK_MODEL, timeoutMs: 18_000 }
+        ];
+
+  return attempts.filter(
+    (attempt, index) => attempts.findIndex((item) => item.model === attempt.model) === index
+  );
+}
+
+async function requestOpenRouter({ task, body, modelRequest, userId }) {
+  const isStructured = Boolean(modelRequest.response_format);
+  const attempts = getModelAttempts(task, isStructured, body.deep === true);
+  let lastFailure = { kind: 'unavailable', status: 502 };
+
+  for (let index = 0; index < attempts.length; index++) {
+    const { model, timeoutMs } = attempts[index];
+    const hasFallback = index < attempts.length - 1;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const startedAt = Date.now();
+
+    try {
+      const upstream = await fetch(OPENROUTER_URL, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': process.env.PUBLIC_SITE_URL || 'https://smart-helper-six.vercel.app',
+          'X-OpenRouter-Title': 'Smart Helper'
+        },
+        body: JSON.stringify({
+          model,
+          ...modelRequest,
+          user: userId,
+          temperature: isStructured ? 0.2 : 0.45,
+          provider: {
+            allow_fallbacks: true,
+            require_parameters: isStructured,
+            sort: 'throughput'
+          },
+          ...(isStructured ? { plugins: [{ id: 'response-healing' }] } : {}),
+          stream: false
+        })
+      });
+
+      const data = await upstream.json().catch(() => ({}));
+      if (!upstream.ok || data.error) {
+        console.error(
+          'OpenRouter request failed:',
+          model,
+          upstream.status,
+          data.error?.code,
+          data.error?.message
+        );
+        lastFailure = {
+          kind: upstream.status === 429 ? 'busy' : 'unavailable',
+          status: upstream.status
+        };
+        if (hasFallback && RETRYABLE_UPSTREAM_STATUSES.has(upstream.status)) continue;
+        return { ok: false, ...lastFailure };
+      }
+
+      const content = data.choices?.[0]?.message?.content;
+      if (typeof content !== 'string' || !content.trim()) {
+        console.error('OpenRouter returned empty content:', model);
+        lastFailure = { kind: 'empty', status: 502 };
+        if (hasFallback) continue;
+        return { ok: false, ...lastFailure };
+      }
+
+      if (isStructured) {
+        try {
+          const parsed = parseStructuredContent(content);
+          const normalized = normalizeStructuredResult(task, parsed, body);
+          console.info('OpenRouter success:', task, model, `${Date.now() - startedAt}ms`);
+          return { ok: true, data: normalized, model };
+        } catch {
+          console.error('Structured AI response was not valid:', model);
+          lastFailure = { kind: 'structured', status: 502 };
+          if (hasFallback) continue;
+          return { ok: false, ...lastFailure };
+        }
+      }
+
+      console.info('OpenRouter success:', task, model, `${Date.now() - startedAt}ms`);
+      return { ok: true, text: content.trim(), model };
+    } catch (error) {
+      const isTimeout = error?.name === 'AbortError' || error?.name === 'TimeoutError';
+      console.error('OpenRouter attempt failed:', model, error?.name || error?.message);
+      lastFailure = { kind: isTimeout ? 'timeout' : 'network', status: isTimeout ? 504 : 502 };
+      if (!hasFallback) return { ok: false, ...lastFailure };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  return { ok: false, ...lastFailure };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -459,6 +634,19 @@ export default async function handler(req, res) {
     return json(res, 401, { error: 'AI қолдану үшін жүйеге кіру қажет' });
   }
 
+  let modelRequest;
+  const task = typeof req.body?.task === 'string' ? req.body.task : 'chat';
+  try {
+    modelRequest = buildModelRequest(req.body || {});
+  } catch (error) {
+    const messages = {
+      EMPTY_MESSAGE: 'Хабарлама енгізіңіз',
+      EMPTY_INPUT: 'Мәтін немесе тақырып енгізіңіз',
+      UNKNOWN_TASK: 'Белгісіз AI құралы'
+    };
+    return json(res, 400, { error: messages[error.message] || 'Сұрау дұрыс емес' });
+  }
+
   let quota;
   try {
     quota = await consumeQuota(user.id);
@@ -474,111 +662,71 @@ export default async function handler(req, res) {
     });
   }
 
-  let modelRequest;
-  const task = typeof req.body?.task === 'string' ? req.body.task : 'chat';
-  try {
-    modelRequest = buildModelRequest(req.body || {});
-  } catch (error) {
-    const messages = {
-      EMPTY_MESSAGE: 'Хабарлама енгізіңіз',
-      EMPTY_INPUT: 'Мәтін немесе тақырып енгізіңіз',
-      UNKNOWN_TASK: 'Белгісіз AI құралы'
-    };
-    return json(res, 400, { error: messages[error.message] || 'Сұрау дұрыс емес' });
-  }
-
   let onlineSources = [];
+  let webStatus;
   if (task === 'chat' && req.body?.web === true) {
     const latestQuestion = [...(req.body.messages || [])]
       .reverse()
       .find((message) => message?.role === 'user')?.content;
     try {
-      onlineSources = await getOnlineSources(latestQuestion);
+      const onlineResult = await getOnlineSources(latestQuestion);
+      onlineSources = onlineResult.sources;
+      webStatus = onlineResult.status;
       addOnlineContext(modelRequest, onlineSources);
     } catch (error) {
+      webStatus = 'unavailable';
       console.warn('Online source lookup failed:', error?.name || error?.message);
     }
   }
 
-  const isStructured = Boolean(modelRequest.response_format);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), OPENROUTER_TIMEOUT_MS);
+  const modelResult = await requestOpenRouter({
+    task,
+    body: req.body || {},
+    modelRequest,
+    userId: user.id
+  });
 
-  try {
-    const routing = { model: isStructured ? STRUCTURED_MODEL : MODEL };
-    const upstream = await fetch(OPENROUTER_URL, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': process.env.PUBLIC_SITE_URL || 'https://smart-helper.vercel.app',
-        'X-OpenRouter-Title': 'Smart Helper'
-      },
-      body: JSON.stringify({
-        ...routing,
-        ...modelRequest,
-        user: user.id,
-        temperature: isStructured ? 0.2 : 0.45,
-        provider: {
-          allow_fallbacks: true,
-          require_parameters: isStructured,
-          sort: 'throughput'
-        },
-        ...(isStructured ? { plugins: [{ id: 'response-healing' }] } : {}),
-        stream: false
-      })
-    });
-
-    const data = await upstream.json();
-    if (!upstream.ok || data.error) {
-      console.error(
-        'OpenRouter request failed:',
-        upstream.status,
-        data.error?.code,
-        data.error?.message
-      );
-      if (upstream.status === 429) {
-        return json(res, 503, { error: 'Тегін AI модельдері бос емес. Бір минуттан кейін қайталап көріңіз.' });
-      }
-      return json(res, 502, { error: 'AI сервисі уақытша қолжетімсіз' });
+  if (!modelResult.ok) {
+    try {
+      await refundQuota(user.id, quota);
+    } catch (error) {
+      console.error('Quota refund failed:', error?.code || error?.message);
     }
 
-    const content = data.choices?.[0]?.message?.content;
-    if (typeof content !== 'string' || !content.trim()) {
-      return json(res, 502, { error: 'AI жауабы бос болды' });
-    }
-
-    const remaining = {
-      minute: quota.minuteRemaining,
-      day: quota.dailyRemaining
+    const errorMessages = {
+      busy: 'Тегін AI модельдері бос емес. Бір минуттан кейін қайталап көріңіз.',
+      timeout: 'AI жауабы тым ұзақ күттірді. Қайтадан көріңіз.',
+      empty: 'AI жауабы бос болды',
+      structured: 'AI құрылымды жауап қайтара алмады',
+      network: 'AI сервисіне қосылу мүмкін болмады',
+      unavailable: 'AI сервисі уақытша қолжетімсіз'
     };
-
-    if (modelRequest.response_format) {
-      try {
-        const parsed = parseStructuredContent(content);
-        const normalized = normalizeStructuredResult(task, parsed, req.body || {});
-        return json(res, 200, { data: normalized, remaining });
-      } catch {
-        console.error('Structured AI response was not valid JSON');
-        return json(res, 502, { error: 'AI құрылымды жауап қайтара алмады' });
-      }
-    }
-
-    return json(res, 200, {
-      text: content.trim(),
-      remaining,
-      ...(onlineSources.length
-        ? { sources: onlineSources.map(({ title, url }) => ({ title, url })) }
-        : {})
+    const responseStatus = modelResult.kind === 'timeout'
+      ? 504
+      : modelResult.kind === 'busy'
+        ? 503
+        : 502;
+    return json(res, responseStatus, {
+      error: errorMessages[modelResult.kind] || errorMessages.unavailable
     });
-  } catch (error) {
-    console.error('AI proxy failed:', error?.name || error?.message);
-    if (error?.name === 'AbortError') {
-      return json(res, 504, { error: 'AI жауабы тым ұзақ күттірді. Қайтадан көріңіз.' });
-    }
-    return json(res, 502, { error: 'AI сервисіне қосылу мүмкін болмады' });
-  } finally {
-    clearTimeout(timeout);
   }
+
+  const remaining = {
+    minute: quota.minuteRemaining,
+    day: quota.dailyRemaining
+  };
+
+  if (modelRequest.response_format) {
+    return json(res, 200, { data: modelResult.data, remaining });
+  }
+
+  return json(res, 200, {
+    text: modelResult.text,
+    remaining,
+    modelMode: task === 'chat' && req.body?.deep === true ? 'deep' : 'fast',
+    ...(req.body?.web === true ? { webStatus: webStatus || 'unavailable' } : {}),
+    ...(onlineSources.length
+      ? { sources: onlineSources.map(({ title, url }) => ({ title, url })) }
+      : {})
+  });
 }

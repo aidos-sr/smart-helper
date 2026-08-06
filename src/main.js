@@ -166,10 +166,13 @@ function callAI(task, payload = {}) {
 /* ═══ CHAT ═══ */
 let msgs = [], chatId = null, hist = [], curMode = 'general';
 let webEnabled = localStorage.getItem('sh-web') !== 'off';
+let deepEnabled = localStorage.getItem('sh-deep') === 'on';
 const msa = document.getElementById('msa');
 const cta = document.getElementById('cta');
 const sndbtn = document.getElementById('sndbtn');
 const webbtn = document.getElementById('webbtn');
+const deepbtn = document.getElementById('deepbtn');
+const modelBadgeText = document.getElementById('modelBadgeText');
 
 function setWebEnabled(enabled) {
   webEnabled = enabled;
@@ -177,11 +180,23 @@ function setWebEnabled(enabled) {
   webbtn.classList.toggle('on', enabled);
   webbtn.setAttribute('aria-pressed', String(enabled));
   webbtn.title = enabled
-    ? 'Интернет дереккөздері қосулы'
-    : 'Интернет дереккөздері өшірулі';
+    ? 'Wikipedia дереккөздері қосулы'
+    : 'Wikipedia дереккөздері өшірулі';
+}
+
+function setDeepEnabled(enabled) {
+  deepEnabled = enabled;
+  localStorage.setItem('sh-deep', enabled ? 'on' : 'off');
+  deepbtn.classList.toggle('on', enabled);
+  deepbtn.setAttribute('aria-pressed', String(enabled));
+  deepbtn.title = enabled
+    ? 'Терең жауап қосулы — жауап ұзағырақ жасалуы мүмкін'
+    : 'Жылдам жауап режимі қосулы';
+  modelBadgeText.textContent = enabled ? 'Терең AI' : 'Жылдам AI';
 }
 
 setWebEnabled(webEnabled);
+setDeepEnabled(deepEnabled);
 
 function setMode(btn) {
   document.querySelectorAll('.modesel').forEach(b => b.classList.remove('on'));
@@ -227,11 +242,22 @@ async function sendMsg() {
   const tid = 'td' + Date.now();
   addTyping(tid);
   try {
-    const d = await callAI('chat', { mode: curMode, messages: msgs, web: webEnabled });
+    const d = await callAI('chat', {
+      mode: curMode,
+      messages: msgs,
+      web: webEnabled,
+      deep: deepEnabled
+    });
     const reply = d.text || 'Жауап алынбады';
     const sources = Array.isArray(d.sources) ? d.sources : [];
-    rmEl(tid); addBubble(reply, false, sources);
-    msgs.push({ role: 'assistant', content: reply, ...(sources.length ? { sources } : {}) });
+    const webStatus = typeof d.webStatus === 'string' ? d.webStatus : '';
+    rmEl(tid); addBubble(reply, false, sources, webStatus);
+    msgs.push({
+      role: 'assistant',
+      content: reply,
+      ...(sources.length ? { sources } : {}),
+      ...(webStatus ? { webStatus } : {})
+    });
     addStat('q', curMode); addXP(10); renderStats();
     if (msgs.length === 2) saveChat(txt); else saveChat(msgs[0].content);
   } catch (error) {
@@ -241,7 +267,7 @@ async function sendMsg() {
   sndbtn.disabled = false;
 }
 
-function addBubble(text, isUser, sources = []) {
+function addBubble(text, isUser, sources = [], webStatus = '') {
   const d = document.createElement('div'); d.className = 'msg' + (isUser ? ' user' : '');
   const av = `<div class="mav ${isUser ? 'uav' : 'aiav'}">${isUser
     ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--tx2)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`
@@ -261,8 +287,13 @@ function addBubble(text, isUser, sources = []) {
       .slice(0, 4)
       .map((source, index) => `<a href="${esc(source.url)}" target="_blank" rel="noopener noreferrer"><span>${index + 1}</span>${esc(source.title || 'Wikipedia')}</a>`)
       .join('');
+    const webStatusText = {
+      no_results: 'Wikipedia: сәйкес дерек табылмады',
+      unavailable: 'Wikipedia уақытша қолжетімсіз'
+    }[webStatus] || '';
     d.innerHTML = av + `<div class="msg-wrap"><div class="mb aib" id="${rid}">${fmtTxt(text)}</div>
-      ${sourceLinks ? `<div class="source-links"><small>Дереккөздер</small>${sourceLinks}</div>` : ''}
+      ${sourceLinks ? `<div class="source-links"><small>Wikipedia дереккөздері</small>${sourceLinks}</div>` : ''}
+      ${webStatusText ? `<div class="source-status">${esc(webStatusText)}</div>` : ''}
       <div class="rate-row">
         <button class="act-btn" title="Көшіру" data-action="copy-message" data-message-id="${rid}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
         <button class="act-btn" title="Жақсы" data-action="rate-message" data-rating="good"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg></button>
@@ -333,7 +364,7 @@ function renderHist() {
   hist.forEach(ch => {
     const d = document.createElement('button'); d.className = 'hi'+(ch.id===chatId?' on':'');
     d.innerHTML = `<div class="hi-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--tx3)" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><span class="hit">${esc(ch.title||'Сұхбат')}</span>`;
-    d.onclick = () => { chatId=ch.id; msgs=ch.messages||[]; msa.innerHTML=''; msgs.forEach(m => addBubble(m.content,m.role==='user',m.sources)); hlHist(); document.getElementById('csb').classList.remove('open'); };
+    d.onclick = () => { chatId=ch.id; msgs=ch.messages||[]; msa.innerHTML=''; msgs.forEach(m => addBubble(m.content,m.role==='user',m.sources,m.webStatus)); hlHist(); document.getElementById('csb').classList.remove('open'); };
     l.appendChild(d);
   });
 }
@@ -372,6 +403,7 @@ document.addEventListener('click', event => {
     'run-tool': () => runTool(control.dataset.tool, control),
     'set-flashcard-subject': () => setFCSubj(control),
     'set-mode': () => setMode(control),
+    'toggle-deep': () => setDeepEnabled(!deepEnabled),
     'toggle-web': () => setWebEnabled(!webEnabled)
   };
   actions[control.dataset.action]?.();

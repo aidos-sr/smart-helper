@@ -22,16 +22,25 @@ const ACHIEVEMENTS = [
   { id:'flash',   icon:'🃏', name:'Карточка',       desc:'20 карточка',req:s => (s.cards||0) >= 20 },
   { id:'plan',    icon:'📅', name:'Жоспарлаушы',   desc:'3 жоспар',   req:s => (s.plans||0) >= 3 },
 ];
+function emptyStats() {
+  return {total:0,today:0,good:0,bad:0,lastDate:'',streak:0,subjects:{},quizzes:0,cards:0,plans:0};
+}
+function storageKey(base, userId = getCurrentUser()?.id) {
+  return `${base}:${userId || 'guest'}`;
+}
 function getStats() {
-  const empty = {total:0,today:0,good:0,bad:0,lastDate:'',streak:0,subjects:{},quizzes:0,cards:0,plans:0};
+  const empty = emptyStats();
   try {
-    const stored = JSON.parse(localStorage.getItem(STAT_KEY));
+    const stored = JSON.parse(localStorage.getItem(storageKey(STAT_KEY)));
     return stored ? {...empty,...stored,subjects:{...empty.subjects,...(stored.subjects||{})}} : empty;
   } catch { return empty; }
 }
-function saveStats(s) { localStorage.setItem(STAT_KEY, JSON.stringify(s)); queueProgressSync(); }
-function getXP() { return parseInt(localStorage.getItem(XP_KEY) || '0'); }
-export function addXP(n) { localStorage.setItem(XP_KEY, getXP() + n); queueProgressSync(); }
+function saveStats(s) { localStorage.setItem(storageKey(STAT_KEY), JSON.stringify(s)); queueProgressSync(); }
+function getXP() {
+  const value = Number.parseInt(localStorage.getItem(storageKey(XP_KEY)) || '0', 10);
+  return Number.isFinite(value) ? value : 0;
+}
+export function addXP(n) { localStorage.setItem(storageKey(XP_KEY), String(getXP() + n)); queueProgressSync(); }
 
 function localDateKey(date = new Date()) {
   const y=date.getFullYear(),m=String(date.getMonth()+1).padStart(2,'0'),d=String(date.getDate()).padStart(2,'0');
@@ -62,12 +71,22 @@ export async function loadProgress() {
   const currentUser = getCurrentUser();
   const supabaseClient = getSupabaseClient();
   if (!currentUser || !supabaseClient) return;
+  const userId = currentUser.id;
   try {
     const { data:cloud, error } = await supabaseClient.from('progress')
-      .select('stats,xp').eq('user_id',currentUser.id).maybeSingle();
+      .select('stats,xp').eq('user_id',userId).maybeSingle();
     if (error) throw error;
-    if (cloud?.stats) localStorage.setItem(STAT_KEY,JSON.stringify(cloud.stats));
-    if (Number.isFinite(Number(cloud?.xp))) localStorage.setItem(XP_KEY,String(cloud.xp));
+    if (getCurrentUser()?.id !== userId) return;
+    if (cloud?.stats) localStorage.setItem(storageKey(STAT_KEY,userId),JSON.stringify(cloud.stats));
+    else if (!localStorage.getItem(storageKey(STAT_KEY,userId))) {
+      localStorage.setItem(storageKey(STAT_KEY,userId),JSON.stringify(emptyStats()));
+    }
+    if (Number.isFinite(Number(cloud?.xp))) localStorage.setItem(storageKey(XP_KEY,userId),String(cloud.xp));
+    else if (!localStorage.getItem(storageKey(XP_KEY,userId))) {
+      localStorage.setItem(storageKey(XP_KEY,userId),'0');
+    }
+    localStorage.removeItem(STAT_KEY);
+    localStorage.removeItem(XP_KEY);
     if (!cloud) queueProgressSync();
     renderStats();
   } catch (error) { console.warn('Progress load failed',error?.code||error?.message); }

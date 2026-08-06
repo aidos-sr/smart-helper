@@ -7,7 +7,9 @@ AI-помощник для учёбы на казахском и русском 
 ```text
 Браузер ── Supabase Auth + Postgres (RLS)
    │
-   └── /api/chat (Vercel Function) ── OpenRouter ── openrouter/free
+   └── /api/chat (Vercel Function) ── OpenRouter ── fast/deep + fallback
+              │
+              ├── Wikipedia API (опциональные учебные источники)
               │
               └── Supabase RPC: атомарные лимиты запросов
 ```
@@ -60,7 +62,12 @@ SQL-миграция создаёт таблицы `chats`, `progress`, `ai_usag
 | `SUPABASE_PUBLISHABLE_KEY` | Да | Публичный `sb_publishable_…` |
 | `SUPABASE_SECRET_KEY` | Да | Серверный `sb_secret_…` |
 | `OPENROUTER_API_KEY` | Да | Секретный ключ OpenRouter |
-| `OPENROUTER_MODEL` | Нет | По умолчанию бесплатный роутер `openrouter/free` |
+| `OPENROUTER_FAST_MODEL` | Нет | Быстрая бесплатная модель для обычного чата |
+| `OPENROUTER_FAST_FALLBACK_MODEL` | Нет | Запасная модель обычного чата |
+| `OPENROUTER_DEEP_MODEL` | Нет | Модель режима «Глубокий ответ» |
+| `OPENROUTER_DEEP_FALLBACK_MODEL` | Нет | Запасная модель глубокого режима |
+| `OPENROUTER_STRUCTURED_MODEL` | Нет | Модель планов, карточек и тестов |
+| `OPENROUTER_STRUCTURED_FALLBACK_MODEL` | Нет | Запасная модель структурированных ответов |
 | `PUBLIC_SITE_URL` | Нет | Адрес сайта на Vercel |
 | `AI_MINUTE_LIMIT` | Нет | По умолчанию 10 запросов в минуту |
 | `AI_DAILY_LIMIT` | Нет | По умолчанию 50 запросов в день |
@@ -95,6 +102,8 @@ npm run dev
 
 - Входные данные, длина истории и параметры AI-инструментов ограничены.
 - Planner, flashcard и quiz запрашивают структурированный ответ по JSON Schema.
+- Неуспешные обращения к моделям не расходуют пользовательскую квоту.
+- Режим Wikipedia использует открытый MediaWiki API и явно показывает состояние поиска.
 - Для контроля расходов задайте spending limit в OpenRouter.
 - JavaScript вынесен в ES-модули, поэтому `unsafe-inline` удалён из `script-src` CSP.
 - В CSS ещё используются отдельные inline-стили разметки, поэтому `style-src` временно сохраняет `unsafe-inline`.
