@@ -13,24 +13,21 @@ const STRUCTURED_MODEL =
   process.env.OPENROUTER_STRUCTURED_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free';
 const STRUCTURED_FALLBACK_MODEL =
   process.env.OPENROUTER_STRUCTURED_FALLBACK_MODEL || 'google/gemma-4-31b-it:free';
+const VISION_MODEL = process.env.OPENROUTER_VISION_MODEL || 'google/gemma-4-31b-it:free';
+const VISION_FALLBACK_MODEL =
+  process.env.OPENROUTER_VISION_FALLBACK_MODEL || 'openrouter/free';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const WEB_SEARCH_TIMEOUT_MS = 5_000;
 const WEB_CACHE_TTL_MS = 10 * 60_000;
-const MAX_BODY_BYTES = 64 * 1024;
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_INPUT_CHARS = 12_000;
 const MAX_CHAT_CHARS = 30_000;
+const MAX_ATTACHMENT_DATA_CHARS = 3_500_000;
+const MAX_TEXT_ATTACHMENT_CHARS = 20_000;
 const RETRYABLE_UPSTREAM_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
-const MODE_PROMPTS = Object.freeze({
-  general:
-    'Сен Smart Helper атты оқу көмекшісісің. Қазақ немесе орыс тілінде, пайдаланушы қай тілде сұраса, сол тілде жауап бер. Жауабың түсінікті, дәл, пайдалы және ынталандырушы болсын. Білмесең, ойдан шығармай ашық айт.',
-  math:
-    'Сен математика мұғалімісісің. Есепті қадамдап түсіндір, формулаларды анық жаз және оқушыны шешімге бағытта. Қате шарт немесе белгісіздік болса, оны көрсет.',
-  history:
-    'Сен Қазақстан және әлем тарихының мұғалімісісің. Даталар, тұлғалар мен оқиғаларды дәл жеткіз. Даулы немесе белгісіз деректерді факт ретінде көрсетпе.',
-  science:
-    'Сен жаратылыстану ғылымдарының мұғалімісісің. Күрделі ұғымдарды қарапайым, бірақ ғылыми дәл тілмен түсіндір және қажет болса қысқа мысал келтір.'
-});
+const CHAT_SYSTEM_PROMPT =
+  'Сен Smart Helper атты оқу көмекшісісің. Қазақ немесе орыс тілінде, пайдаланушы қай тілде сұраса, сол тілде жауап бер. Жауабың түсінікті, дәл, пайдалы және ынталандырушы болсын. Білмесең, ойдан шығармай ашық айт.';
 
 const JSON_SCHEMAS = Object.freeze({
   planner: {
@@ -98,9 +95,10 @@ const JSON_SCHEMAS = Object.freeze({
                 maxItems: 4,
                 items: { type: 'string' }
               },
-              correct: { type: 'integer', minimum: 0, maximum: 3 }
+              correct: { type: 'integer', minimum: 0, maximum: 3 },
+              explanation: { type: 'string' }
             },
-            required: ['q', 'opts', 'correct'],
+            required: ['q', 'opts', 'correct', 'explanation'],
             additionalProperties: false
           }
         }
@@ -176,7 +174,11 @@ function normalizeStructuredResult(task, value, body) {
           .map((question) => ({
             q: question.q.trim(),
             opts: question.opts.map((option) => option.trim()),
-            correct: question.correct
+            correct: question.correct,
+            explanation:
+              typeof question.explanation === 'string' && question.explanation.trim()
+                ? question.explanation.trim().slice(0, 800)
+                : `Дұрыс жауап — ${question.opts[question.correct]}.`
           }))
           .filter((question) => question.q && question.opts.every(Boolean))
           .slice(0, count)
@@ -382,9 +384,41 @@ async function refundQuota(uid, reservation) {
   throw new Error('Quota refund conflicted too many times');
 }
 
+function normalizeAttachments(value) {
+  const source = Array.isArray(value) ? value.slice(0, 3) : [];
+  let dataChars = 0;
+  return source.map((attachment) => {
+    const name = asText(attachment?.name, 120).replace(/[\\/\0-\x1f]/g, '_') || 'file';
+    const type = asText(attachment?.type, 80).toLowerCase();
+    const kind = attachment?.kind;
+    if (kind === 'text') {
+      const content = asText(attachment?.content, MAX_TEXT_ATTACHMENT_CHARS);
+      if (!content) throw new Error('INVALID_ATTACHMENT');
+      return { kind, name, type, content };
+    }
+    const dataUrl = typeof attachment?.dataUrl === 'string' ? attachment.dataUrl : '';
+    dataChars += dataUrl.length;
+    if (!dataUrl || dataChars > MAX_ATTACHMENT_DATA_CHARS) throw new Error('INVALID_ATTACHMENT');
+    if (kind === 'image') {
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(type)) {
+        throw new Error('INVALID_ATTACHMENT');
+      }
+      if (!dataUrl.startsWith(`data:${type};base64,`)) throw new Error('INVALID_ATTACHMENT');
+      return { kind, name, type, dataUrl };
+    }
+    if (kind === 'pdf') {
+      if (type !== 'application/pdf' || !dataUrl.startsWith('data:application/pdf;base64,')) {
+        throw new Error('INVALID_ATTACHMENT');
+      }
+      return { kind, name, type, dataUrl };
+    }
+    throw new Error('INVALID_ATTACHMENT');
+  });
+}
+
 function buildChatRequest(body) {
-  const mode = Object.hasOwn(MODE_PROMPTS, body.mode) ? body.mode : 'general';
   const source = Array.isArray(body.messages) ? body.messages.slice(-20) : [];
+  const attachments = normalizeAttachments(body.attachments);
   const messages = [];
   let totalChars = 0;
 
@@ -401,8 +435,29 @@ function buildChatRequest(body) {
     throw new Error('EMPTY_MESSAGE');
   }
 
+  if (attachments.length) {
+    const latest = messages.at(-1);
+    const parts = [{ type: 'text', text: latest.content || 'Осы файлды талдап, түсіндір.' }];
+    attachments.forEach((attachment) => {
+      if (attachment.kind === 'image') {
+        parts.push({ type: 'image_url', image_url: { url: attachment.dataUrl } });
+      } else if (attachment.kind === 'pdf') {
+        parts.push({
+          type: 'file',
+          file: { filename: attachment.name, file_data: attachment.dataUrl }
+        });
+      } else {
+        parts.push({
+          type: 'text',
+          text: `\n\nФайл: ${attachment.name}\n---\n${attachment.content}\n---`
+        });
+      }
+    });
+    latest.content = parts;
+  }
+
   return {
-    messages: [{ role: 'system', content: MODE_PROMPTS[mode] }, ...messages],
+    messages: [{ role: 'system', content: CHAT_SYSTEM_PROMPT }, ...messages],
     max_tokens: 1_500
   };
 }
@@ -414,8 +469,7 @@ function buildTextToolRequest(task, body) {
   const prompts = {
     sum: `Мәтінді негізгі ойды сақтап, 3-5 сөйлемге дейін қысқарт. Тек дайын қысқаша мәтінді қайтар:\n\n${input}`,
     trans: `Мәтінді ${asText(body.targetLanguage, 40) || 'қазақ тіліне'} аудар. Мағынасын, атауларын және пішімін сақта. Тек аударманы қайтар:\n\n${input}`,
-    fix: `Мәтіндегі емле, тыныс белгілері және грамматикалық қателерді түзет. Мағынасын өзгертпе. Тек түзетілген нұсқаны қайтар:\n\n${input}`,
-    idea: `Осы тақырып немесе мақсат бойынша іске жарамды 5 идея ұсын. Әр идеяны қысқа түсіндір:\n\n${input}`
+    fix: `Мәтіндегі емле, тыныс белгілері және грамматикалық қателерді түзет. Мағынасын өзгертпе. Тек түзетілген нұсқаны қайтар:\n\n${input}`
   };
 
   return {
@@ -457,7 +511,7 @@ function buildStructuredRequest(task, body) {
         { role: 'system', content: 'Сен оқушыға шынайы орындалатын, нақты оқу жоспарын жасайтын педагогсің.' },
         { role: 'user', content: `${days} күндік оқу жоспарын жаса. Тақырып: ${topic}. Мақсат: ${goal}. Күніне: ${hours} сағат.` }
       ],
-      max_tokens: 1_800,
+      max_tokens: Math.min(4_000, 700 + days * 110),
       response_format: format
     };
   }
@@ -480,9 +534,9 @@ function buildStructuredRequest(task, body) {
   return {
     messages: [
       { role: 'system', content: 'Сен бір ғана дұрыс жауабы бар, анық және фактілік оқу тесттерін жасайтын мұғалімсің.' },
-      { role: 'user', content: `«${topic}» тақырыбы бойынша дәл ${count} тест сұрағын жаса. Әр сұрақта 4 жауап нұсқасы болсын.` }
+      { role: 'user', content: `«${topic}» тақырыбы бойынша дәл ${count} тест сұрағын жаса. Әр сұрақта 4 жауап нұсқасы және дұрыс жауаптың қысқа, түсінікті түсіндірмесі болсын.` }
     ],
-    max_tokens: 2_000,
+    max_tokens: Math.min(4_000, 600 + count * 210),
     response_format: format
   };
 }
@@ -490,16 +544,21 @@ function buildStructuredRequest(task, body) {
 function buildModelRequest(body) {
   const task = typeof body.task === 'string' ? body.task : 'chat';
   if (task === 'chat') return buildChatRequest(body);
-  if (['sum', 'trans', 'fix', 'idea'].includes(task)) return buildTextToolRequest(task, body);
+  if (['sum', 'trans', 'fix'].includes(task)) return buildTextToolRequest(task, body);
   if (['planner', 'flashcards', 'quiz'].includes(task)) return buildStructuredRequest(task, body);
   throw new Error('UNKNOWN_TASK');
 }
 
-function getModelAttempts(task, isStructured, deep) {
-  const attempts = isStructured
+function getModelAttempts(task, isStructured, deep, hasImage = false) {
+  const attempts = hasImage
     ? [
-        { model: STRUCTURED_MODEL, timeoutMs: 22_000 },
-        { model: STRUCTURED_FALLBACK_MODEL, timeoutMs: 18_000 }
+        { model: VISION_MODEL, timeoutMs: 24_000 },
+        { model: VISION_FALLBACK_MODEL, timeoutMs: 20_000 }
+      ]
+    : isStructured
+    ? [
+        { model: STRUCTURED_MODEL, timeoutMs: 28_000 },
+        { model: STRUCTURED_FALLBACK_MODEL, timeoutMs: 20_000 }
       ]
     : task === 'chat' && deep
       ? [
@@ -518,7 +577,10 @@ function getModelAttempts(task, isStructured, deep) {
 
 async function requestOpenRouter({ task, body, modelRequest, userId }) {
   const isStructured = Boolean(modelRequest.response_format);
-  const attempts = getModelAttempts(task, isStructured, body.deep === true);
+  const attachments = normalizeAttachments(body.attachments);
+  const hasImage = attachments.some((attachment) => attachment.kind === 'image');
+  const hasPdf = attachments.some((attachment) => attachment.kind === 'pdf');
+  const attempts = getModelAttempts(task, isStructured, body.deep === true, hasImage);
   let lastFailure = { kind: 'unavailable', status: 502 };
 
   for (let index = 0; index < attempts.length; index++) {
@@ -548,7 +610,14 @@ async function requestOpenRouter({ task, body, modelRequest, userId }) {
             require_parameters: isStructured,
             sort: 'throughput'
           },
-          ...(isStructured ? { plugins: [{ id: 'response-healing' }] } : {}),
+          ...((isStructured || hasPdf)
+            ? {
+                plugins: [
+                  ...(isStructured ? [{ id: 'response-healing' }] : []),
+                  ...(hasPdf ? [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }] : [])
+                ]
+              }
+            : {}),
           stream: false
         })
       });
@@ -607,6 +676,144 @@ async function requestOpenRouter({ task, body, modelRequest, userId }) {
   return { ok: false, ...lastFailure };
 }
 
+function publicAIError(kind) {
+  return {
+    busy: 'Тегін AI модельдері бос емес. Бір минуттан кейін қайталап көріңіз.',
+    timeout: 'AI жауабы тым ұзақ күттірді. Қайтадан көріңіз.',
+    empty: 'AI жауабы бос болды',
+    structured: 'AI құрылымды жауап қайтара алмады',
+    network: 'AI сервисіне қосылу мүмкін болмады',
+    unavailable: 'AI сервисі уақытша қолжетімсіз'
+  }[kind] || 'AI сервисі уақытша қолжетімсіз';
+}
+
+function writeStreamEvent(res, payload) {
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function readDeltaText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('');
+}
+
+async function requestOpenRouterStream({ body, modelRequest, userId, res, metadata }) {
+  const attachments = normalizeAttachments(body.attachments);
+  const hasImage = attachments.some((attachment) => attachment.kind === 'image');
+  const hasPdf = attachments.some((attachment) => attachment.kind === 'pdf');
+  const attempts = getModelAttempts('chat', false, body.deep === true, hasImage);
+  const deadline = Date.now() + 52_000;
+  let lastFailure = { kind: 'unavailable', status: 502 };
+
+  for (let index = 0; index < attempts.length; index++) {
+    const { model, timeoutMs } = attempts[index];
+    const hasFallback = index < attempts.length - 1;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs < 2_000) return { ok: false, ...lastFailure };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Math.min(timeoutMs + 12_000, remainingMs));
+
+    try {
+      const upstream = await fetch(OPENROUTER_URL, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': process.env.PUBLIC_SITE_URL || 'https://smart-helper-six.vercel.app',
+          'X-OpenRouter-Title': 'Smart Helper'
+        },
+        body: JSON.stringify({
+          model,
+          ...modelRequest,
+          user: userId,
+          temperature: 0.45,
+          provider: { allow_fallbacks: true, sort: 'throughput' },
+          ...(hasPdf
+            ? { plugins: [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }] }
+            : {}),
+          stream: true
+        })
+      });
+
+      if (!upstream.ok || !upstream.body) {
+        const data = await upstream.json().catch(() => ({}));
+        console.error('OpenRouter stream failed:', model, upstream.status, data.error?.message);
+        lastFailure = {
+          kind: upstream.status === 429 ? 'busy' : 'unavailable',
+          status: upstream.status
+        };
+        if (hasFallback && RETRYABLE_UPSTREAM_STATUSES.has(upstream.status)) continue;
+        return { ok: false, ...lastFailure };
+      }
+
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders?.();
+      writeStreamEvent(res, { type: 'meta', ...metadata });
+
+      const reader = upstream.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullText = '';
+      let finished = false;
+
+      const processLine = (line) => {
+        const clean = line.trim();
+        if (!clean || clean.startsWith(':') || !clean.startsWith('data:')) return;
+        const payload = clean.slice(5).trim();
+        if (payload === '[DONE]') { finished = true; return; }
+        let event;
+        try { event = JSON.parse(payload); } catch { return; }
+        if (event.error) throw new Error(event.error.message || 'STREAM_ERROR');
+        const delta = readDeltaText(event.choices?.[0]?.delta?.content);
+        if (!delta) return;
+        fullText += delta;
+        writeStreamEvent(res, { type: 'delta', text: delta });
+      };
+
+      try {
+        while (!finished) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() || '';
+          lines.forEach(processLine);
+        }
+        if (buffer.trim()) processLine(buffer);
+      } catch (error) {
+        console.error('OpenRouter stream interrupted:', model, error?.name || error?.message);
+        writeStreamEvent(res, { type: 'error', error: publicAIError('network') });
+        res.end();
+        return { ok: false, kind: 'network', streamStarted: true, hadDelta: Boolean(fullText) };
+      }
+
+      if (!fullText.trim()) {
+        writeStreamEvent(res, { type: 'error', error: publicAIError('empty') });
+        res.end();
+        return { ok: false, kind: 'empty', streamStarted: true, hadDelta: false };
+      }
+      writeStreamEvent(res, { type: 'done', text: fullText.trim() });
+      res.end();
+      console.info('OpenRouter stream success:', model);
+      return { ok: true, text: fullText.trim(), streamStarted: true };
+    } catch (error) {
+      const isTimeout = error?.name === 'AbortError' || error?.name === 'TimeoutError';
+      console.error('OpenRouter stream attempt failed:', model, error?.name || error?.message);
+      lastFailure = { kind: isTimeout ? 'timeout' : 'network', status: isTimeout ? 504 : 502 };
+      if (!hasFallback) return { ok: false, ...lastFailure };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  return { ok: false, ...lastFailure };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -642,6 +849,7 @@ export default async function handler(req, res) {
     const messages = {
       EMPTY_MESSAGE: 'Хабарлама енгізіңіз',
       EMPTY_INPUT: 'Мәтін немесе тақырып енгізіңіз',
+      INVALID_ATTACHMENT: 'Файл түрі немесе көлемі дұрыс емес',
       UNKNOWN_TASK: 'Белгісіз AI құралы'
     };
     return json(res, 400, { error: messages[error.message] || 'Сұрау дұрыс емес' });
@@ -679,6 +887,35 @@ export default async function handler(req, res) {
     }
   }
 
+  const remaining = {
+    minute: quota.minuteRemaining,
+    day: quota.dailyRemaining
+  };
+
+  if (task === 'chat' && req.body?.stream === true) {
+    const streamResult = await requestOpenRouterStream({
+      body: req.body || {},
+      modelRequest,
+      userId: user.id,
+      res,
+      metadata: {
+        remaining,
+        modelMode: req.body?.deep === true ? 'deep' : 'fast',
+        ...(req.body?.web === true ? { webStatus: webStatus || 'unavailable' } : {}),
+        ...(onlineSources.length
+          ? { sources: onlineSources.map(({ title, url }) => ({ title, url })) }
+          : {})
+      }
+    });
+    if (!streamResult.ok && !streamResult.hadDelta) {
+      try { await refundQuota(user.id, quota); }
+      catch (error) { console.error('Quota refund failed:', error?.code || error?.message); }
+    }
+    if (streamResult.streamStarted) return;
+    const responseStatus = streamResult.kind === 'timeout' ? 504 : streamResult.kind === 'busy' ? 503 : 502;
+    return json(res, responseStatus, { error: publicAIError(streamResult.kind) });
+  }
+
   const modelResult = await requestOpenRouter({
     task,
     body: req.body || {},
@@ -693,28 +930,15 @@ export default async function handler(req, res) {
       console.error('Quota refund failed:', error?.code || error?.message);
     }
 
-    const errorMessages = {
-      busy: 'Тегін AI модельдері бос емес. Бір минуттан кейін қайталап көріңіз.',
-      timeout: 'AI жауабы тым ұзақ күттірді. Қайтадан көріңіз.',
-      empty: 'AI жауабы бос болды',
-      structured: 'AI құрылымды жауап қайтара алмады',
-      network: 'AI сервисіне қосылу мүмкін болмады',
-      unavailable: 'AI сервисі уақытша қолжетімсіз'
-    };
     const responseStatus = modelResult.kind === 'timeout'
       ? 504
       : modelResult.kind === 'busy'
         ? 503
         : 502;
     return json(res, responseStatus, {
-      error: errorMessages[modelResult.kind] || errorMessages.unavailable
+      error: publicAIError(modelResult.kind)
     });
   }
-
-  const remaining = {
-    minute: quota.minuteRemaining,
-    day: quota.dailyRemaining
-  };
 
   if (modelRequest.response_format) {
     return json(res, 200, { data: modelResult.data, remaining });

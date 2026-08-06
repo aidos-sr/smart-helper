@@ -35,6 +35,7 @@
 }
 
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+:focus-visible { outline:2px solid var(--ac); outline-offset:2px; }
 html { scroll-behavior:smooth; }
 body {
   background: var(--bg);

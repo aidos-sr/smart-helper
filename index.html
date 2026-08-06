@@ -197,16 +197,7 @@
       <button class="mobbtn" id="mobbtn">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
-      <div class="modes" id="modes">
-        <button class="modesel on" data-mode="general"  data-action="set-mode"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>Жалпы</button>
-        <button class="modesel"    data-mode="math"     data-action="set-mode"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>Математика</button>
-        <button class="modesel"    data-mode="history"  data-action="set-mode"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Тарих</button>
-        <button class="modesel"    data-mode="science"  data-action="set-mode"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v11m0 0H5a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2h-4m-6 0h6"/></svg>Ғылым</button>
-      </div>
       <div class="mbadge"><span class="sdot"></span><span id="modelBadgeText">Жылдам AI</span></div>
-      <button class="clrbtn" id="clrbtn" title="Тазалау">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-      </button>
     </div>
     <div class="msa" id="msa">
       <div class="welcome" id="wlc">
@@ -228,9 +219,15 @@
       </div>
     </div>
     <div class="ciarea">
+      <div class="attachment-list" id="attachmentList" aria-live="polite"></div>
+      <div class="attachment-error" id="attachmentError" role="status" aria-live="polite"></div>
       <div class="iwrap">
+        <input id="chatFileInput" type="file" accept="image/jpeg,image/png,image/webp,application/pdf,text/plain,text/markdown,text/csv,.txt,.md,.csv" multiple hidden>
+        <button class="attach-btn" id="attachBtn" type="button" data-action="choose-attachments" aria-label="Фото немесе файл қосу" title="Фото немесе файл қосу">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
         <textarea class="cta" id="cta" placeholder="Сұрағыңызды жазыңыз..." rows="1"></textarea>
-        <button class="sndbtn" id="sndbtn">
+        <button class="sndbtn" id="sndbtn" aria-label="Хабарламаны жіберу" title="Жіберу">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
       </div>
@@ -285,14 +282,6 @@
           <button class="bpri" style="font-size:.82rem;padding:9px 18px" data-action="run-tool" data-tool="fix">Түзету</button>
           <div class="tc-result" id="fixOut"></div>
         </div>
-        <div class="tool-card">
-          <div class="tc-icon" style="background:rgba(255,179,71,.1)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffb347" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
-          <div class="tc-title">Идея генерациясы</div>
-          <div class="tc-desc">Тақырып бойынша шығармашыл идеялар ұсынады</div>
-          <textarea class="tc-area" id="ideaIn" placeholder="Тақырып немесе мақсат жазыңыз..." style="min-height:70px"></textarea>
-          <button class="bpri" style="font-size:.82rem;padding:9px 18px" data-action="run-tool" data-tool="idea">Идея ұсын</button>
-          <div class="tc-result" id="ideaOut"></div>
-        </div>
       </div>
     </div>
   </section>
@@ -319,6 +308,8 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
             Жоспар жасау
           </button>
+          <div class="generation-status" id="planStatus" role="status" aria-live="polite"></div>
+          <select class="tc-sel saved-select" id="planSavedSelect" aria-label="Сақталған жоспарды ашу" hidden></select>
         </div>
         <div class="planner-output">
           <div class="sl" style="margin-bottom:20px">Жоспар</div>
@@ -375,6 +366,8 @@
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
             AI карточкалар жасау
           </button>
+          <div class="generation-status" id="fcGenStatus" role="status" aria-live="polite"></div>
+          <select class="tc-sel saved-select" id="fcSavedSelect" aria-label="Сақталған карточкаларды ашу" hidden></select>
         </div>
       </div>
     </div>
@@ -404,6 +397,8 @@
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
             Тест жасау
           </button>
+          <div class="generation-status" id="quizGenStatus" role="status" aria-live="polite"></div>
+          <select class="tc-sel saved-select" id="quizSavedSelect" aria-label="Сақталған тестті ашу" hidden></select>
         </div>
       </div>
       <div id="quizActive" class="quiz-active" style="display:none">
@@ -413,6 +408,8 @@
           <div class="quiz-q" id="quizQ">Жүктелуде...</div>
         </div>
         <div class="quiz-opts" id="quizOpts"></div>
+        <div class="quiz-explanation" id="quizExplanation" role="status" hidden></div>
+        <button class="bpri quiz-next" id="quizNextBtn" data-action="next-quiz-question" hidden>Келесі сұрақ</button>
       </div>
       <div id="quizResult" class="quiz-result" style="display:none">
         <div class="quiz-score" id="quizScoreN">0/0</div>
@@ -434,8 +431,7 @@
       <div class="stats-grid">
         <div class="stat-card"><span class="stat-n" id="stTotal">0</span><div class="stat-l">Жалпы сұрақ</div></div>
         <div class="stat-card"><span class="stat-n" id="stToday">0</span><div class="stat-l">Бүгін</div></div>
-        <div class="stat-card"><span class="stat-n" id="stGood" style="background:linear-gradient(135deg,var(--ac3),#00cc6a);-webkit-background-clip:text;-webkit-text-fill-color:transparent">0</span><div class="stat-l">Жақсы жауап</div></div>
-        <div class="stat-card"><span class="stat-n" id="stBad"  style="background:linear-gradient(135deg,var(--ac4),#cc0033);-webkit-background-clip:text;-webkit-text-fill-color:transparent">0</span><div class="stat-l">Нашар жауап</div></div>
+        <div class="stat-card"><span class="stat-n" id="rStreak" style="background:linear-gradient(135deg,#ffb347,#f59e0b);-webkit-background-clip:text;-webkit-text-fill-color:transparent">0</span><div class="stat-l">Күндік streak</div></div>
       </div>
       <div class="xp-card">
         <div class="xp-top">
@@ -454,14 +450,6 @@
       <div class="chart-wrap" style="margin-top:16px">
         <div class="chart-title">Жетістіктер</div>
         <div class="achievements-grid" id="achievGrid"></div>
-      </div>
-      <div class="chart-wrap">
-        <div class="chart-title">Пән бойынша сұрақтар</div>
-        <div id="barChart"></div>
-      </div>
-      <div class="rating-wrap">
-        <div class="rating-card"><span class="stat-n" id="rPct">–</span><div class="rlabel">Оң бағалар</div></div>
-        <div class="rating-card"><span class="stat-n" id="rStreak" style="background:linear-gradient(135deg,#ffb347,#f59e0b);-webkit-background-clip:text;-webkit-text-fill-color:transparent">0</span><div class="rlabel">Күндік streak</div></div>
       </div>
     </div>
   </section>

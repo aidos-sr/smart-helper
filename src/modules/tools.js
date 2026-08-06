@@ -5,7 +5,6 @@ export async function runTool(type, btn) {
     sum:   {inId:'sumIn',   outId:'sumOut'},
     trans: {inId:'transIn', outId:'transOut'},
     fix:   {inId:'fixIn',   outId:'fixOut'},
-    idea:  {inId:'ideaIn',  outId:'ideaOut'},
   };
   const cfg = configs[type];
   if (!cfg) return;

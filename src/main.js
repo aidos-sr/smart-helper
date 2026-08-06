@@ -1,12 +1,12 @@
 import { initBackground } from './ui/background.js';
 import { initializeSupabase } from './services/supabase.js';
-import { requestAI } from './services/ai.js';
+import { requestAIStream } from './services/ai.js';
 import { addXP, addStat, loadProgress, renderStats } from './modules/progress.js';
 import { esc, fmtTxt } from './utils/text.js';
 import { runTool } from './modules/tools.js';
-import { runPlanner } from './modules/planner.js';
-import { fcResult, flipCard, genFlashcards, initFlashcards, nextCard, setFCSubj } from './modules/flashcards.js';
-import { genQuiz, resetQuiz } from './modules/quiz.js';
+import { initPlanner, loadSavedPlan, runPlanner } from './modules/planner.js';
+import { createFlashcardsFromText, fcResult, flipCard, genFlashcards, initFlashcards, loadSavedFlashcards, nextCard, setFCSubj } from './modules/flashcards.js';
+import { createQuizFromText, genQuiz, initQuiz, loadSavedQuiz, nextQuizQuestion, resetQuiz } from './modules/quiz.js';
 
 initBackground();
 
@@ -48,6 +48,8 @@ function go(page, sub) {
   document.querySelectorAll('.nb[data-p]').forEach(b => b.classList.toggle('on', b.dataset.p === page));
   if (page === 'stats') renderStats();
   if (page === 'flashcard') initFlashcards();
+  if (page === 'quiz') initQuiz();
+  if (page === 'planner') initPlanner();
   document.querySelector('.nav').classList.remove('hidden');
 }
 
@@ -159,12 +161,12 @@ const autherr = error => ({
 })[error?.code] || error?.message || 'Қате орын алды';
 const setbl = (id, l, t) => { const b = document.getElementById(id); b.disabled = l; b.textContent = l ? 'Күте тұрыңыз...' : t; };
 
-function callAI(task, payload = {}) {
-  return requestAI(task, payload, { onAuthRequired: () => showAuth('login') });
-}
-
 /* ═══ CHAT ═══ */
-let msgs = [], chatId = null, hist = [], curMode = 'general';
+let msgs = [], chatId = null, hist = [];
+let pendingAttachments = [];
+let chatRequestActive = false;
+const retryRequests = new Map();
+const answerTexts = new Map();
 let webEnabled = localStorage.getItem('sh-web') !== 'off';
 let deepEnabled = localStorage.getItem('sh-deep') === 'on';
 const msa = document.getElementById('msa');
@@ -173,6 +175,10 @@ const sndbtn = document.getElementById('sndbtn');
 const webbtn = document.getElementById('webbtn');
 const deepbtn = document.getElementById('deepbtn');
 const modelBadgeText = document.getElementById('modelBadgeText');
+const chatFileInput = document.getElementById('chatFileInput');
+const attachmentList = document.getElementById('attachmentList');
+const attachmentError = document.getElementById('attachmentError');
+const attachBtn = document.getElementById('attachBtn');
 
 function setWebEnabled(enabled) {
   webEnabled = enabled;
@@ -198,21 +204,34 @@ function setDeepEnabled(enabled) {
 setWebEnabled(webEnabled);
 setDeepEnabled(deepEnabled);
 
-function setMode(btn) {
-  document.querySelectorAll('.modesel').forEach(b => b.classList.remove('on'));
-  btn.classList.add('on');
-  curMode = btn.dataset.mode;
-}
-
 sndbtn.onclick = sendMsg;
 cta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
 cta.addEventListener('input', () => { cta.style.height = 'auto'; cta.style.height = Math.min(cta.scrollHeight, 140) + 'px'; });
 document.getElementById('newbtn').onclick = newChat;
-document.getElementById('clrbtn').onclick = () => { if (confirm('Чатты тазалайсыз ба?')) newChat(); };
 document.getElementById('mobbtn').onclick = () => document.getElementById('csb').classList.toggle('open');
+chatFileInput.addEventListener('change', async () => {
+  attachBtn.disabled = true;
+  attachmentError.textContent = 'Файл өңделуде...';
+  attachmentError.dataset.state = 'loading';
+  try {
+    await addAttachments([...chatFileInput.files]);
+    attachmentError.textContent = '';
+  } catch (error) {
+    attachmentError.textContent = error.message;
+    attachmentError.dataset.state = 'error';
+  } finally {
+    attachBtn.disabled = false;
+    chatFileInput.value = '';
+  }
+});
 
 function newChat() {
+  if (chatRequestActive) return;
   chatId = null; msgs = [];
+  answerTexts.clear(); retryRequests.clear();
+  pendingAttachments = [];
+  renderPendingAttachments();
+  attachmentError.textContent = '';
   msa.innerHTML = ''; msa.appendChild(mkWelcome());
   hlHist(); document.getElementById('csb').classList.remove('open');
 }
@@ -233,95 +252,251 @@ function mkWelcome() {
 
 function qpu(btn) { cta.value = btn.textContent.trim(); cta.focus(); }
 
-async function sendMsg() {
-  const txt = cta.value.trim(); if (!txt || sndbtn.disabled) return;
-  document.getElementById('wlc')?.remove();
-  addBubble(txt, true); cta.value = ''; cta.style.height = 'auto';
-  msgs.push({ role: 'user', content: txt });
-  sndbtn.disabled = true;
-  const tid = 'td' + Date.now();
-  addTyping(tid);
+const readAsDataURL = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(new Error('Файлды оқу мүмкін болмады'));
+  reader.readAsDataURL(file);
+});
+
+const readAsText = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result || ''));
+  reader.onerror = () => reject(new Error('Файлды оқу мүмкін болмады'));
+  reader.readAsText(file);
+});
+
+async function prepareImage(file, sourceType) {
+  if (file.size > 8 * 1024 * 1024) throw new Error(`${file.name}: фото 8 МБ-тан үлкен`);
+  if (file.size <= 900 * 1024) {
+    const rawDataUrl = String(await readAsDataURL(file));
+    const dataUrl = rawDataUrl.replace(/^data:[^;]*;base64,/, `data:${sourceType};base64,`);
+    return { dataUrl, type: sourceType, size: file.size };
+  }
+  const objectUrl = URL.createObjectURL(file);
   try {
-    const d = await callAI('chat', {
-      mode: curMode,
-      messages: msgs,
-      web: webEnabled,
-      deep: deepEnabled
+    const image = await new Promise((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error(`${file.name}: сурет ашылмады`));
+      element.src = objectUrl;
     });
-    const reply = d.text || 'Жауап алынбады';
-    const sources = Array.isArray(d.sources) ? d.sources : [];
-    const webStatus = typeof d.webStatus === 'string' ? d.webStatus : '';
-    rmEl(tid); addBubble(reply, false, sources, webStatus);
+    const scale = Math.min(1, 1600 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', 0.82));
+    if (!blob) throw new Error(`${file.name}: суретті өңдеу мүмкін болмады`);
+    return { dataUrl: await readAsDataURL(blob), type: 'image/webp', size: blob.size };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function prepareAttachment(file) {
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  const inferredImageType = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', webp:'image/webp' }[extension];
+  const imageType = ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)
+    ? file.type
+    : inferredImageType;
+  if (imageType) {
+    return { id: crypto.randomUUID(), name: file.name, kind: 'image', ...(await prepareImage(file, imageType)) };
+  }
+  if (file.type === 'application/pdf' || extension === 'pdf') {
+    if (file.size > 2.4 * 1024 * 1024) throw new Error(`${file.name}: PDF 2.4 МБ-тан үлкен`);
+    const rawDataUrl = String(await readAsDataURL(file));
+    const dataUrl = rawDataUrl.replace(/^data:[^;]*;base64,/, 'data:application/pdf;base64,');
+    return { id: crypto.randomUUID(), name: file.name, kind: 'pdf', type: 'application/pdf', size: file.size, dataUrl };
+  }
+  if (['txt', 'md', 'csv'].includes(extension) || ['text/plain', 'text/markdown', 'text/csv'].includes(file.type)) {
+    if (file.size > 250 * 1024) throw new Error(`${file.name}: мәтіндік файл 250 КБ-тан үлкен`);
+    return { id: crypto.randomUUID(), name: file.name, kind: 'text', type: file.type || 'text/plain', size: file.size, content: (await readAsText(file)).slice(0, 20000) };
+  }
+  throw new Error(`${file.name}: бұл файл түрі қолдау таппайды`);
+}
+
+async function addAttachments(files) {
+  const slots = 3 - pendingAttachments.length;
+  if (slots <= 0) throw new Error('Бір хабарламаға ең көбі 3 файл қосуға болады');
+  for (const file of files.slice(0, slots)) {
+    const attachment = await prepareAttachment(file);
+    const nextDataSize = [...pendingAttachments, attachment]
+      .reduce((total, item) => total + (item.dataUrl?.length || 0), 0);
+    if (nextDataSize > 3_200_000) throw new Error('Файлдардың жалпы көлемі тым үлкен');
+    pendingAttachments.push(attachment);
+    renderPendingAttachments();
+  }
+  renderPendingAttachments();
+}
+
+function renderPendingAttachments() {
+  attachmentList.replaceChildren();
+  pendingAttachments.forEach((attachment) => {
+    const chip = document.createElement('div'); chip.className = 'attachment-preview';
+    const icon = attachment.kind === 'image' ? 'Фото' : attachment.kind === 'pdf' ? 'PDF' : 'TXT';
+    chip.innerHTML = `<span class="attachment-kind">${icon}</span><span>${esc(attachment.name)}</span><button type="button" data-action="remove-attachment" data-attachment-id="${attachment.id}" aria-label="${esc(attachment.name)} файлын алып тастау">×</button>`;
+    attachmentList.appendChild(chip);
+  });
+}
+
+function removeAttachment(id) {
+  pendingAttachments = pendingAttachments.filter((attachment) => attachment.id !== id);
+  renderPendingAttachments();
+  attachmentError.textContent = '';
+}
+
+function attachmentMetadata(attachments) {
+  return attachments.map(({ name, type, kind }) => ({ name, type, kind }));
+}
+
+async function sendMsg() {
+  const typedText = cta.value.trim();
+  if ((!typedText && !pendingAttachments.length) || chatRequestActive) return;
+  const attachments = pendingAttachments;
+  const text = typedText || 'Осы файлдарды талдап, түсіндір.';
+  const metadata = attachmentMetadata(attachments);
+  document.getElementById('wlc')?.remove();
+  addBubble(text, true, [], '', { attachments: metadata });
+  msgs.push({ role: 'user', content: text, ...(metadata.length ? { attachments: metadata } : {}) });
+  cta.value = ''; cta.style.height = 'auto';
+  pendingAttachments = []; renderPendingAttachments();
+  const request = {
+    text,
+    attachments,
+    messages: msgs.map(({ role, content }) => ({ role, content })),
+    title: msgs[0]?.content || text,
+    web: webEnabled,
+    deep: deepEnabled
+  };
+  await runAssistantRequest(request);
+}
+
+async function runAssistantRequest(request, retryKey = crypto.randomUUID()) {
+  chatRequestActive = true; sndbtn.disabled = true;
+  const bubble = addBubble('', false, [], '', { streaming: true });
+  bubble.content.innerHTML = '<span class="streaming-label">AI жауап дайындауда...</span>';
+  let latestText = '';
+  let streamMeta = {};
+  let paintScheduled = false;
+  try {
+    const response = await requestAIStream({
+      messages: request.messages,
+      attachments: request.attachments,
+      web: request.web,
+      deep: request.deep
+    }, {
+      onMeta: (meta) => { streamMeta = meta; },
+      onDelta: (_delta, fullText) => {
+        latestText = fullText;
+        if (paintScheduled) return;
+        paintScheduled = true;
+        requestAnimationFrame(() => {
+          bubble.content.innerHTML = fmtTxt(latestText);
+          answerTexts.set(bubble.content.id, latestText);
+          msa.scrollTop = msa.scrollHeight;
+          paintScheduled = false;
+        });
+      }
+    }, { onAuthRequired: () => showAuth('login') });
+    const reply = response.text || latestText;
+    const sources = Array.isArray(response.sources) ? response.sources : (streamMeta.sources || []);
+    const webStatus = response.webStatus || streamMeta.webStatus || '';
+    bubble.content.innerHTML = fmtTxt(reply);
+    answerTexts.set(bubble.content.id, reply);
+    bubble.element.classList.remove('streaming');
+    bubble.extras.innerHTML = assistantExtras(sources, webStatus);
     msgs.push({
-      role: 'assistant',
-      content: reply,
+      role: 'assistant', content: reply,
       ...(sources.length ? { sources } : {}),
       ...(webStatus ? { webStatus } : {})
     });
-    addStat('q', curMode); addXP(10); renderStats();
-    if (msgs.length === 2) saveChat(txt); else saveChat(msgs[0].content);
+    retryRequests.delete(retryKey);
+    addStat('q'); addXP(10); renderStats();
+    saveChat(request.title);
   } catch (error) {
-    rmEl(tid);
-    addBubble(error.message || 'AI сервисі уақытша қолжетімсіз.', false);
+    bubble.element.remove();
+    retryRequests.set(retryKey, request);
+    addBubble(error.message || 'AI сервисі уақытша қолжетімсіз.', false, [], '', { error: true, retryKey });
+  } finally {
+    chatRequestActive = false; sndbtn.disabled = false;
   }
-  sndbtn.disabled = false;
 }
 
-function addBubble(text, isUser, sources = [], webStatus = '') {
+function assistantExtras(sources = [], webStatus = '') {
+  const sourceLinks = sources
+    .filter((source) => /^https:\/\/[a-z-]+\.wikipedia\.org\//i.test(source?.url || ''))
+    .slice(0, 4)
+    .map((source, index) => `<a href="${esc(source.url)}" target="_blank" rel="noopener noreferrer"><span>${index + 1}</span>${esc(source.title || 'Wikipedia')}</a>`)
+    .join('');
+  const webStatusText = {
+    no_results: 'Wikipedia: сәйкес дерек табылмады',
+    unavailable: 'Wikipedia уақытша қолжетімсіз'
+  }[webStatus] || '';
+  return `${sourceLinks ? `<div class="source-links"><small>Wikipedia дереккөздері</small>${sourceLinks}</div>` : ''}${webStatusText ? `<div class="source-status">${esc(webStatusText)}</div>` : ''}`;
+}
+
+function addBubble(text, isUser, sources = [], webStatus = '', options = {}) {
   const d = document.createElement('div'); d.className = 'msg' + (isUser ? ' user' : '');
+  if (options.streaming) d.classList.add('streaming');
+  if (options.error) d.classList.add('message-error');
   const av = `<div class="mav ${isUser ? 'uav' : 'aiav'}">${isUser
     ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--tx2)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`
     : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L20 7V14Q20 20 12 23Q4 20 4 14V7Z" stroke="white" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="2.5" fill="white" fill-opacity=".95"/><path d="M12 4V10" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>`
   }</div>`;
+  const attachments = Array.isArray(options.attachments) ? options.attachments : [];
+  const attachmentHtml = attachments.length
+    ? `<div class="message-attachments">${attachments.map((attachment) => `<span><b>${attachment.kind === 'image' ? 'Фото' : attachment.kind === 'pdf' ? 'PDF' : 'TXT'}</b>${esc(attachment.name)}</span>`).join('')}</div>`
+    : '';
   if (isUser) {
-    const uid = 'u' + Date.now();
+    const uid = 'u' + crypto.randomUUID();
     d.innerHTML = av + `<div class="msg-wrap"><div class="mb ub" id="${uid}">${esc(text)}</div>
-      <div class="rate-row" style="justify-content:flex-end">
-        <button class="act-btn" title="Көшіру" data-action="copy-message" data-message-id="${uid}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-        <button class="act-btn" title="Өңдеу" data-action="edit-message" data-message-id="${uid}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+      ${attachmentHtml}
+      <div class="message-actions" style="justify-content:flex-end">
+        <button class="act-btn" title="Көшіру" aria-label="Хабарламаны көшіру" data-action="copy-message" data-message-id="${uid}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
       </div></div>`;
   } else {
-    const rid = 'r' + Date.now();
-    const sourceLinks = sources
-      .filter((source) => /^https:\/\/[a-z-]+\.wikipedia\.org\//i.test(source?.url || ''))
-      .slice(0, 4)
-      .map((source, index) => `<a href="${esc(source.url)}" target="_blank" rel="noopener noreferrer"><span>${index + 1}</span>${esc(source.title || 'Wikipedia')}</a>`)
-      .join('');
-    const webStatusText = {
-      no_results: 'Wikipedia: сәйкес дерек табылмады',
-      unavailable: 'Wikipedia уақытша қолжетімсіз'
-    }[webStatus] || '';
-    d.innerHTML = av + `<div class="msg-wrap"><div class="mb aib" id="${rid}">${fmtTxt(text)}</div>
-      ${sourceLinks ? `<div class="source-links"><small>Wikipedia дереккөздері</small>${sourceLinks}</div>` : ''}
-      ${webStatusText ? `<div class="source-status">${esc(webStatusText)}</div>` : ''}
-      <div class="rate-row">
-        <button class="act-btn" title="Көшіру" data-action="copy-message" data-message-id="${rid}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-        <button class="act-btn" title="Жақсы" data-action="rate-message" data-rating="good"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg></button>
-        <button class="act-btn" title="Нашар" data-action="rate-message" data-rating="bad"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/><path d="M17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg></button>
+    const rid = 'r' + crypto.randomUUID();
+    answerTexts.set(rid, text);
+    const actions = options.error
+      ? `<button class="retry-btn" data-action="retry-message" data-retry-key="${esc(options.retryKey || '')}">Қайта жіберу</button>`
+      : `<button class="act-btn" title="Көшіру" aria-label="AI жауабын көшіру" data-action="copy-message" data-message-id="${rid}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        <button class="study-action" data-action="answer-to-flashcards" data-message-id="${rid}">Карточкалар</button>
+        <button class="study-action" data-action="answer-to-quiz" data-message-id="${rid}">Тест</button>`;
+    d.innerHTML = av + `<div class="msg-wrap"><div class="mb aib" id="${rid}">${options.error ? esc(text) : fmtTxt(text)}</div>
+      <div class="assistant-extras">${assistantExtras(sources, webStatus)}</div>
+      <div class="message-actions">
+        ${actions}
       </div></div>`;
   }
   msa.appendChild(d); msa.scrollTop = msa.scrollHeight;
+  return {
+    element: d,
+    content: d.querySelector('.mb'),
+    extras: d.querySelector('.assistant-extras')
+  };
 }
 
-function addTyping(id) {
-  const d = document.createElement('div'); d.className = 'msg'; d.id = id;
-  d.innerHTML = `<div class="mav aiav"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L20 7V14Q20 20 12 23Q4 20 4 14V7Z" stroke="white" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="2.5" fill="white" fill-opacity=".95"/></svg></div>
-    <div class="mb aib typing"><span></span><span></span><span></span></div>`;
-  msa.appendChild(d); msa.scrollTop = msa.scrollHeight;
+async function retryMessage(control) {
+  const key = control.dataset.retryKey;
+  const request = retryRequests.get(key);
+  if (!request || chatRequestActive) return;
+  control.closest('.msg')?.remove();
+  await runAssistantRequest(request, key);
 }
-function rmEl(id) { document.getElementById(id)?.remove(); }
 
-function rateMsg(btn, type) {
-  const row = btn.closest('.rate-row');
-  const btns = row.querySelectorAll('.act-btn');
-  const previous = row.dataset.rating || '';
-  const next = previous === type ? '' : type;
-  row.dataset.rating = next;
-  btns[1]?.classList.toggle('liked', next === 'good');
-  btns[2]?.classList.toggle('disliked', next === 'bad');
-  addStat('r', { previous, next });
-  renderStats();
+async function makeStudyMaterial(kind, messageId) {
+  const text = answerTexts.get(messageId) || document.getElementById(messageId)?.innerText || '';
+  if (!text || chatRequestActive) return;
+  if (kind === 'flashcards') {
+    go('flashcard');
+    await createFlashcardsFromText(text);
+  } else {
+    go('quiz');
+    await createQuizFromText(text);
+  }
 }
+
 function copyMsg(btn, id) {
   const el = document.getElementById(id); if (!el) return;
   navigator.clipboard.writeText(el.innerText).then(() => {
@@ -331,12 +506,6 @@ function copyMsg(btn, id) {
     setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('copied'); }, 1500);
   });
 }
-function editMsg(btn, id) {
-  const el = document.getElementById(id); if (!el) return;
-  cta.value = el.innerText; cta.style.height = 'auto';
-  cta.style.height = Math.min(cta.scrollHeight, 140) + 'px'; cta.focus();
-}
-
 /* ═══ SUPABASE HISTORY ═══ */
 async function saveChat(first) {
   if (!currentUser || !supabaseClient) return;
@@ -364,7 +533,13 @@ function renderHist() {
   hist.forEach(ch => {
     const d = document.createElement('button'); d.className = 'hi'+(ch.id===chatId?' on':'');
     d.innerHTML = `<div class="hi-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--tx3)" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><span class="hit">${esc(ch.title||'Сұхбат')}</span>`;
-    d.onclick = () => { chatId=ch.id; msgs=ch.messages||[]; msa.innerHTML=''; msgs.forEach(m => addBubble(m.content,m.role==='user',m.sources,m.webStatus)); hlHist(); document.getElementById('csb').classList.remove('open'); };
+    d.onclick = () => {
+      if (chatRequestActive) return;
+      chatId=ch.id; msgs=ch.messages||[]; answerTexts.clear(); retryRequests.clear();
+      pendingAttachments=[]; renderPendingAttachments(); msa.innerHTML='';
+      msgs.forEach(m => addBubble(m.content,m.role==='user',m.sources,m.webStatus,{attachments:m.attachments}));
+      hlHist(); document.getElementById('csb').classList.remove('open');
+    };
     l.appendChild(d);
   });
 }
@@ -373,6 +548,11 @@ function hlHist() { document.querySelectorAll('.hi').forEach((el,i) => el.classL
 /* ═══ BURGER ═══ */
 document.getElementById('burger').onclick = () => document.getElementById('nlinks').classList.toggle('open');
 document.addEventListener('smart-helper:auth-required', () => showAuth('login'));
+document.addEventListener('change', (event) => {
+  if (event.target.id === 'fcSavedSelect') loadSavedFlashcards();
+  if (event.target.id === 'quizSavedSelect') loadSavedQuiz();
+  if (event.target.id === 'planSavedSelect') loadSavedPlan();
+});
 
 document.addEventListener('click', event => {
   const control = event.target.closest('[data-go],[data-action]');
@@ -384,9 +564,11 @@ document.addEventListener('click', event => {
   }
 
   const actions = {
+    'answer-to-flashcards': () => makeStudyMaterial('flashcards', control.dataset.messageId),
+    'answer-to-quiz': () => makeStudyMaterial('quiz', control.dataset.messageId),
     'auth-tab': () => atab(control.dataset.tab),
+    'choose-attachments': () => chatFileInput.click(),
     'copy-message': () => copyMsg(control, control.dataset.messageId),
-    'edit-message': () => editMsg(control, control.dataset.messageId),
     'flashcard-result': () => fcResult(control.dataset.result),
     'flip-card': () => flipCard(),
     'generate-flashcards': () => genFlashcards(),
@@ -395,14 +577,15 @@ document.addEventListener('click', event => {
     'login': () => doLogin(),
     'logo': () => currentUser ? go('chat') : showAuth(),
     'next-card': () => nextCard(),
+    'next-quiz-question': () => nextQuizQuestion(),
     'quick-prompt': () => qpu(control),
-    'rate-message': () => rateMsg(control, control.dataset.rating),
     'register': () => doReg(),
+    'remove-attachment': () => removeAttachment(control.dataset.attachmentId),
     'reset-quiz': () => resetQuiz(),
+    'retry-message': () => retryMessage(control),
     'run-planner': () => runPlanner(),
     'run-tool': () => runTool(control.dataset.tool, control),
     'set-flashcard-subject': () => setFCSubj(control),
-    'set-mode': () => setMode(control),
     'toggle-deep': () => setDeepEnabled(!deepEnabled),
     'toggle-web': () => setWebEnabled(!webEnabled)
   };

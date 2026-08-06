@@ -1,6 +1,6 @@
 # Smart Helper
 
-AI-помощник для учёбы на казахском и русском языках. Чат, обработка текста, учебные планы, карточки и тесты используют бесплатные размещённые open-source модели через OpenRouter — локальный запуск модели не нужен.
+AI-помощник для учёбы на казахском и русском языках. Чат с потоковыми ответами принимает фото, PDF и текстовые файлы; планы, карточки и тесты используют бесплатные размещённые open-source модели через OpenRouter — локальный запуск модели не нужен.
 
 ## Архитектура
 
@@ -26,6 +26,7 @@ src/
 │   └── ai.js               # запросы к серверному AI API
 ├── modules/
 │   ├── progress.js
+│   ├── library.js          # сохранённые планы, карточки и тесты
 │   ├── tools.js
 │   ├── planner.js
 │   ├── flashcards.js
@@ -42,7 +43,9 @@ src/
 ## Настройка Supabase
 
 1. Создайте проект на [supabase.com](https://supabase.com/dashboard).
-2. Откройте **SQL Editor**, вставьте содержимое [`supabase/migrations/202608060001_initial.sql`](supabase/migrations/202608060001_initial.sql) и выполните запрос.
+2. Откройте **SQL Editor** и по порядку выполните:
+   - [`supabase/migrations/202608060001_initial.sql`](supabase/migrations/202608060001_initial.sql);
+   - [`supabase/migrations/202608060002_study_materials.sql`](supabase/migrations/202608060002_study_materials.sql).
 3. В **Project Settings → API Keys** скопируйте:
    - Project URL;
    - Publishable key (`sb_publishable_…`) для браузера;
@@ -50,7 +53,7 @@ src/
 4. В **Authentication → URL Configuration** задайте адрес сайта как Site URL и добавьте Vercel preview/production URL в Redirect URLs.
 5. Для входа Google включите провайдер в **Authentication → Providers → Google** и добавьте показанный Supabase callback URL в Google Cloud Console.
 
-SQL-миграция создаёт таблицы `chats`, `progress`, `ai_usage`, включает RLS и разрешает пользователю видеть и менять только собственные чаты и прогресс. `ai_usage` доступна только серверной роли.
+Миграции создают таблицы `chats`, `progress`, `study_materials`, `ai_usage`, включают RLS и разрешают пользователю видеть и менять только собственные данные. `ai_usage` доступна только серверной роли.
 
 ## Переменные окружения Vercel
 
@@ -68,6 +71,8 @@ SQL-миграция создаёт таблицы `chats`, `progress`, `ai_usag
 | `OPENROUTER_DEEP_FALLBACK_MODEL` | Нет | Запасная модель глубокого режима |
 | `OPENROUTER_STRUCTURED_MODEL` | Нет | Модель планов, карточек и тестов |
 | `OPENROUTER_STRUCTURED_FALLBACK_MODEL` | Нет | Запасная модель структурированных ответов |
+| `OPENROUTER_VISION_MODEL` | Нет | Бесплатная мультимодальная модель для фото |
+| `OPENROUTER_VISION_FALLBACK_MODEL` | Нет | Запасной бесплатный мультимодальный маршрутизатор |
 | `PUBLIC_SITE_URL` | Нет | Адрес сайта на Vercel |
 | `AI_MINUTE_LIMIT` | Нет | По умолчанию 10 запросов в минуту |
 | `AI_DAILY_LIMIT` | Нет | По умолчанию 50 запросов в день |
@@ -94,6 +99,7 @@ npm run dev
 - Supabase Auth: email/password и Google OAuth.
 - `chats`: последние 60 диалогов пользователя.
 - `progress`: статистика и XP.
+- `study_materials`: сохранённые планы, карточки и тесты.
 - `ai_usage`: минутные и дневные лимиты AI, изменяемые только сервером.
 
 Все пользовательские таблицы защищены Row Level Security. Сервер дополнительно проверяет актуального пользователя через `auth.getUser(access_token)` перед обращением к модели.
@@ -101,6 +107,7 @@ npm run dev
 ## Ограничения и безопасность
 
 - Входные данные, длина истории и параметры AI-инструментов ограничены.
+- Вложения отправляются в AI напрямую и не сохраняются в Supabase; поддерживаются JPEG, PNG, WebP, PDF, TXT, MD и CSV.
 - Planner, flashcard и quiz запрашивают структурированный ответ по JSON Schema.
 - Неуспешные обращения к моделям не расходуют пользовательскую квоту.
 - Режим Wikipedia использует открытый MediaWiki API и явно показывает состояние поиска.

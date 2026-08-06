@@ -17,13 +17,12 @@ const ACHIEVEMENTS = [
   { id:'ten',     icon:'🔟', name:'10 сұрақ',      desc:'10 сұрақ',   req:s => s.total >= 10  },
   { id:'fifty',   icon:'⚡', name:'50 сұрақ',      desc:'50 сұрақ',   req:s => s.total >= 50  },
   { id:'streak3', icon:'🔥', name:'3 күн',          desc:'3 күн streak',req:s => calcStreak() >= 3 },
-  { id:'rating',  icon:'⭐', name:'Сапалы',         desc:'10 оң баға', req:s => s.good >= 10   },
   { id:'quiz10',  icon:'🧠', name:'Тест шебері',    desc:'10 тест',    req:s => (s.quizzes||0) >= 10 },
   { id:'flash',   icon:'🃏', name:'Карточка',       desc:'20 карточка',req:s => (s.cards||0) >= 20 },
   { id:'plan',    icon:'📅', name:'Жоспарлаушы',   desc:'3 жоспар',   req:s => (s.plans||0) >= 3 },
 ];
 function emptyStats() {
-  return {total:0,today:0,good:0,bad:0,lastDate:'',streak:0,subjects:{},quizzes:0,cards:0,plans:0};
+  return {total:0,today:0,lastDate:'',streak:0,quizzes:0,cards:0,plans:0};
 }
 function storageKey(base, userId = getCurrentUser()?.id) {
   return `${base}:${userId || 'guest'}`;
@@ -32,7 +31,7 @@ function getStats() {
   const empty = emptyStats();
   try {
     const stored = JSON.parse(localStorage.getItem(storageKey(STAT_KEY)));
-    return stored ? {...empty,...stored,subjects:{...empty.subjects,...(stored.subjects||{})}} : empty;
+    return stored ? {...empty,...stored} : empty;
   } catch { return empty; }
 }
 function saveStats(s) { localStorage.setItem(storageKey(STAT_KEY), JSON.stringify(s)); queueProgressSync(); }
@@ -100,13 +99,7 @@ export function addStat(type, val) {
     s.today=0;
     s.lastDate=today;
   }
-  if (type === 'q') { s.total++; s.today++; s.subjects[val] = (s.subjects[val]||0) + 1; }
-  else if (type === 'r') {
-    if (val.previous === 'good') s.good=Math.max(0,s.good-1);
-    if (val.previous === 'bad') s.bad=Math.max(0,s.bad-1);
-    if (val.next === 'good') s.good++;
-    if (val.next === 'bad') s.bad++;
-  }
+  if (type === 'q') { s.total++; s.today++; }
   else if (type === 'quiz') s.quizzes = (s.quizzes||0) + 1;
   else if (type === 'card') s.cards = (s.cards||0) + 1;
   else if (type === 'plan') s.plans = (s.plans||0) + 1;
@@ -116,10 +109,6 @@ export function renderStats() {
   const s = getStats();
   document.getElementById('stTotal').textContent = s.total;
   document.getElementById('stToday').textContent = s.today;
-  document.getElementById('stGood').textContent = s.good;
-  document.getElementById('stBad').textContent = s.bad;
-  const tot = s.good + s.bad;
-  document.getElementById('rPct').textContent = tot ? Math.round(s.good/tot*100)+'%' : '–';
   document.getElementById('rStreak').textContent = calcStreak();
   const xp = getXP();
   let lvlIdx = 0;
@@ -146,13 +135,6 @@ export function renderStats() {
       <span class="ach-desc">${a.desc}</span>
       ${!unlocked?`<svg class="lock-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--tx3)" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`:''}
     </div>`;
-  });
-  const bc = document.getElementById('barChart'); bc.innerHTML = '';
-  const labels = {general:'Жалпы',math:'Математика',history:'Тарих',science:'Ғылым'};
-  const max = Math.max(...Object.values(s.subjects), 1);
-  Object.entries(labels).forEach(([k,l]) => {
-    const v = s.subjects[k]||0, pct2 = Math.round(v/max*100);
-    bc.innerHTML += `<div class="bar-row"><span class="bar-label">${l}</span><div class="bar-bg"><div class="bar-fill" style="width:${pct2}%"></div></div><span class="bar-val">${v}</span></div>`;
   });
 }
 function calcStreak() {
