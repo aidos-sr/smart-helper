@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 
-const MODEL = process.env.OPENROUTER_MODEL || 'qwen/qwen3.5-9b';
+const MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_INPUT_CHARS = 12_000;
@@ -141,7 +141,7 @@ async function authenticate(req) {
 
 async function consumeQuota(uid) {
   const minuteLimit = asBoundedInt(process.env.AI_MINUTE_LIMIT, 1, 100, 10);
-  const dailyLimit = asBoundedInt(process.env.AI_DAILY_LIMIT, 1, 10_000, 100);
+  const dailyLimit = asBoundedInt(process.env.AI_DAILY_LIMIT, 1, 10_000, 50);
   const { data, error } = await getSupabaseAdmin().rpc('consume_ai_quota', {
     p_user_id: uid,
     p_minute_limit: minuteLimit,

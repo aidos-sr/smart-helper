@@ -7,7 +7,7 @@ AI-помощник для учёбы на казахском и русском 
 ```text
 Браузер ── Supabase Auth + Postgres (RLS)
    │
-   └── /api/chat (Vercel Function) ── OpenRouter ── qwen/qwen3.5-9b
+   └── /api/chat (Vercel Function) ── OpenRouter ── openrouter/free
               │
               └── Supabase RPC: атомарные лимиты запросов
 ```
@@ -37,10 +37,10 @@ SQL-миграция создаёт таблицы `chats`, `progress`, `ai_usag
 | `SUPABASE_PUBLISHABLE_KEY` | Да | Публичный `sb_publishable_…` |
 | `SUPABASE_SECRET_KEY` | Да | Серверный `sb_secret_…` |
 | `OPENROUTER_API_KEY` | Да | Секретный ключ OpenRouter |
-| `OPENROUTER_MODEL` | Нет | По умолчанию `qwen/qwen3.5-9b` |
+| `OPENROUTER_MODEL` | Нет | По умолчанию бесплатный роутер `openrouter/free` |
 | `PUBLIC_SITE_URL` | Нет | Адрес сайта на Vercel |
 | `AI_MINUTE_LIMIT` | Нет | По умолчанию 10 запросов в минуту |
-| `AI_DAILY_LIMIT` | Нет | По умолчанию 100 запросов в день |
+| `AI_DAILY_LIMIT` | Нет | По умолчанию 50 запросов в день |
 
 Код также понимает старые имена `SUPABASE_ANON_KEY` и `SUPABASE_SERVICE_ROLE_KEY`, но для новых проектов рекомендуются publishable/secret keys.
 
