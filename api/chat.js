@@ -1,22 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 
 const MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
+const STRUCTURED_MODEL =
+  process.env.OPENROUTER_STRUCTURED_MODEL || 'nvidia/nemotron-nano-9b-v2:free';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_TIMEOUT_MS = 45_000;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_INPUT_CHARS = 12_000;
 const MAX_CHAT_CHARS = 30_000;
-
-// These models are free, support structured outputs, and are ordered with the
-// fastest current option first. OpenRouter automatically falls back through
-// the list when a free provider is busy or rate-limited.
-const DEFAULT_STRUCTURED_MODELS = Object.freeze([
-  'nvidia/nemotron-nano-9b-v2:free',
-  'openai/gpt-oss-20b:free',
-  'google/gemma-4-26b-a4b-it:free',
-  'nvidia/nemotron-3-super-120b-a12b:free',
-  'openrouter/free'
-]);
 
 const MODE_PROMPTS = Object.freeze({
   general:
@@ -120,14 +111,6 @@ function asText(value, max = MAX_INPUT_CHARS) {
 function asBoundedInt(value, min, max, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
-}
-
-function getStructuredModels() {
-  const configured = (process.env.OPENROUTER_STRUCTURED_MODELS || '')
-    .split(',')
-    .map((model) => model.trim())
-    .filter(Boolean);
-  return configured.length ? configured : DEFAULT_STRUCTURED_MODELS;
 }
 
 function parseStructuredContent(content) {
@@ -419,9 +402,7 @@ export default async function handler(req, res) {
   const timeout = setTimeout(() => controller.abort(), OPENROUTER_TIMEOUT_MS);
 
   try {
-    const routing = isStructured
-      ? { models: getStructuredModels() }
-      : { model: MODEL };
+    const routing = { model: isStructured ? STRUCTURED_MODEL : MODEL };
     const upstream = await fetch(OPENROUTER_URL, {
       method: 'POST',
       signal: controller.signal,
@@ -448,7 +429,12 @@ export default async function handler(req, res) {
 
     const data = await upstream.json();
     if (!upstream.ok || data.error) {
-      console.error('OpenRouter request failed:', upstream.status, data.error?.code || data.error?.message);
+      console.error(
+        'OpenRouter request failed:',
+        upstream.status,
+        data.error?.code,
+        data.error?.message
+      );
       if (upstream.status === 429) {
         return json(res, 503, { error: 'Тегін AI модельдері бос емес. Бір минуттан кейін қайталап көріңіз.' });
       }
