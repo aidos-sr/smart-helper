@@ -1,6 +1,4 @@
-import { cert, getApps, initializeApp } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
-import { getDatabase } from 'firebase-admin/database';
+import { createClient } from '@supabase/supabase-js';
 
 const MODEL = process.env.OPENROUTER_MODEL || 'qwen/qwen3.5-9b';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -112,27 +110,23 @@ function asBoundedInt(value, min, max, fallback) {
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
 }
 
-function getFirebaseApp() {
-  if (getApps().length) return getApps()[0];
+let supabaseAdmin;
 
-  const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  const databaseURL = process.env.FIREBASE_DATABASE_URL;
-  if (!rawJson || !databaseURL) {
-    throw new Error('Firebase Admin environment is not configured');
-  }
+function getSupabaseAdmin() {
+  if (supabaseAdmin) return supabaseAdmin;
 
-  const raw = JSON.parse(rawJson);
-  const serviceAccount = {
-    projectId: raw.project_id || raw.projectId,
-    clientEmail: raw.client_email || raw.clientEmail,
-    privateKey: String(raw.private_key || raw.privateKey || '').replace(/\\n/g, '\n')
-  };
+  const url = process.env.SUPABASE_URL;
+  const secretKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !secretKey) throw new Error('Supabase server environment is not configured');
 
-  if (!serviceAccount.projectId || !serviceAccount.clientEmail || !serviceAccount.privateKey) {
-    throw new Error('Firebase service account is incomplete');
-  }
-
-  return initializeApp({ credential: cert(serviceAccount), databaseURL });
+  supabaseAdmin = createClient(url, secretKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false
+    }
+  });
+  return supabaseAdmin;
 }
 
 async function authenticate(req) {
@@ -140,42 +134,32 @@ async function authenticate(req) {
   if (!header.startsWith('Bearer ')) return null;
   const token = header.slice(7).trim();
   if (!token) return null;
-  return getAuth(getFirebaseApp()).verifyIdToken(token, true);
+  const { data, error } = await getSupabaseAdmin().auth.getUser(token);
+  if (error) throw error;
+  return data.user;
 }
 
 async function consumeQuota(uid) {
   const minuteLimit = asBoundedInt(process.env.AI_MINUTE_LIMIT, 1, 100, 10);
   const dailyLimit = asBoundedInt(process.env.AI_DAILY_LIMIT, 1, 10_000, 100);
-  const now = Date.now();
-  const dayKey = new Date(now).toISOString().slice(0, 10);
-  const minuteKey = Math.floor(now / 60_000);
-  const ref = getDatabase(getFirebaseApp()).ref(`aiUsage/${uid}`);
+  const { data, error } = await getSupabaseAdmin().rpc('consume_ai_quota', {
+    p_user_id: uid,
+    p_minute_limit: minuteLimit,
+    p_daily_limit: dailyLimit
+  });
+  if (error) throw error;
 
-  const result = await ref.transaction(current => {
-    const state = current && typeof current === 'object' ? current : {};
-    const dayCount = state.dayKey === dayKey ? Number(state.dayCount || 0) : 0;
-    const minuteCount = state.minuteKey === minuteKey ? Number(state.minuteCount || 0) : 0;
-
-    if (dayCount >= dailyLimit || minuteCount >= minuteLimit) return;
-
-    return {
-      dayKey,
-      dayCount: dayCount + 1,
-      minuteKey,
-      minuteCount: minuteCount + 1,
-      updatedAt: now
-    };
-  }, undefined, false);
-
-  if (!result.committed) {
-    return { allowed: false, minuteLimit, dailyLimit };
+  const usage = Array.isArray(data) ? data[0] : data;
+  if (!usage || typeof usage.allowed !== 'boolean') {
+    throw new Error('Invalid quota response');
   }
 
-  const usage = result.snapshot.val();
   return {
-    allowed: true,
-    minuteRemaining: Math.max(0, minuteLimit - usage.minuteCount),
-    dailyRemaining: Math.max(0, dailyLimit - usage.dayCount)
+    allowed: usage.allowed,
+    minuteLimit,
+    dailyLimit,
+    minuteRemaining: Number(usage.minute_remaining || 0),
+    dailyRemaining: Number(usage.daily_remaining || 0)
   };
 }
 
@@ -311,17 +295,17 @@ export default async function handler(req, res) {
   try {
     user = await authenticate(req);
   } catch (error) {
-    console.error('Firebase authentication failed:', error?.code || error?.message);
+    console.error('Supabase authentication failed:', error?.code || error?.message);
     return json(res, 401, { error: 'Қайта кіріп көріңіз' });
   }
 
-  if (!user?.uid) {
+  if (!user?.id) {
     return json(res, 401, { error: 'AI қолдану үшін жүйеге кіру қажет' });
   }
 
   let quota;
   try {
-    quota = await consumeQuota(user.uid);
+    quota = await consumeQuota(user.id);
   } catch (error) {
     console.error('Rate limit storage failed:', error?.code || error?.message);
     return json(res, 503, { error: 'Сұрау лимитін тексеру мүмкін болмады' });
@@ -358,7 +342,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: MODEL,
         ...modelRequest,
-        user: user.uid,
+        user: user.id,
         temperature: 0.45,
         stream: false
       })

@@ -763,7 +763,7 @@ body::after {
 
 <!-- NAV -->
 <nav class="nav hidden">
-  <div class="logo" onclick="auth.currentUser ? go('chat') : showAuth()">
+  <div class="logo" onclick="currentUser ? go('chat') : showAuth()">
     <div class="logo-icon">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
         <path d="M12 2L20 7V14Q20 20 12 23Q4 20 4 14V7Z" stroke="white" stroke-width="1.8" stroke-linejoin="round" fill="none"/>
@@ -1256,10 +1256,8 @@ body::after {
   </div>
 </div>
 
-<!-- FIREBASE -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<!-- SUPABASE -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.1/dist/umd/supabase.js"></script>
 <script>
 /* ═══ ANIMATED BACKGROUND ═══ */
 (function() {
@@ -1388,17 +1386,26 @@ body::after {
 })();
 
 /* ═══ CONFIG ═══ */
-firebase.initializeApp({
-  apiKey:            "AIzaSyCQ_u4iZobLlNswT6Dp55nG7xp2rlcw3kg",
-  authDomain:        "smart-helper-94c93.firebaseapp.com",
-  databaseURL:       "https://smart-helper-94c93-default-rtdb.firebaseio.com",
-  projectId:         "smart-helper-94c93",
-  storageBucket:     "smart-helper-94c93.firebasestorage.app",
-  messagingSenderId: "1095857328539",
-  appId:             "1:1095857328539:web:a30b503979e43b231e913e"
-});
-const auth = firebase.auth();
-const db   = firebase.database();
+let supabaseClient = null;
+let currentUser = null;
+let currentSession = null;
+
+async function initSupabase() {
+  const response = await fetch('/api/config', { headers: { Accept: 'application/json' } });
+  const config = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(config.error || 'Supabase конфигурациясы жүктелмеді');
+
+  supabaseClient = window.supabase.createClient(
+    config.supabaseUrl,
+    config.supabasePublishableKey,
+    { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
+  );
+
+  supabaseClient.auth.onAuthStateChange((_event, session) => applyAuthSession(session));
+  const { data, error } = await supabaseClient.auth.getSession();
+  if (error) throw error;
+  applyAuthSession(data.session);
+}
 
 /* ═══ THEME ═══ */
 const tbtn = document.getElementById('tbtn');
@@ -1416,7 +1423,7 @@ tbtn.onclick = () => setTheme(document.documentElement.getAttribute('data-theme'
 /* ═══ ROUTER ═══ */
 function go(page, sub) {
   if (page === 'auth') { showAuth(sub); return; }
-  if (!auth.currentUser) { showAuth(); return; }
+  if (!currentUser) { showAuth(); return; }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   document.querySelectorAll('.chatwrap').forEach(p => p.classList.remove('on'));
   if (page === 'chat') {
@@ -1446,21 +1453,30 @@ function showAuth(sub) {
 
 /* ═══ AUTH STATE ═══ */
 let _authReady = false;
-auth.onAuthStateChanged(user => {
+let _authUserId = null;
+function applyAuthSession(session) {
+  const user = session?.user || null;
+  const nextUserId = user?.id || null;
+  const changed = nextUserId !== _authUserId;
+  currentSession = session || null;
+  currentUser = user;
   document.getElementById('anav').style.display = user ? 'none' : 'flex';
   document.getElementById('unav').style.display = user ? 'flex' : 'none';
   if (user) {
-    document.getElementById('ubadge').textContent = user.displayName || user.email.split('@')[0];
-    loadHistory();
-    loadProgress();
+    document.getElementById('ubadge').textContent = user.user_metadata?.display_name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'User';
+    if (changed || !_authReady) setTimeout(() => { loadHistory(); loadProgress(); }, 0);
     if (!_authReady) go('chat');
   } else {
     clearHistUI();
     showAuth();
   }
+  _authUserId = nextUserId;
   _authReady = true;
-});
-document.getElementById('loutbtn').onclick = () => auth.signOut().then(() => showAuth());
+}
+document.getElementById('loutbtn').onclick = async () => {
+  if (supabaseClient) await supabaseClient.auth.signOut();
+  showAuth();
+};
 
 /* ═══ AUTH FORMS ═══ */
 function atab(tab) {
@@ -1483,8 +1499,13 @@ async function doLogin() {
   const err = document.getElementById('lErr'); err.textContent = '';
   if (!e || !p) { err.textContent = 'Толтырыңыз'; return; }
   setbl('lBtn', true, 'Кіру');
-  try { await auth.signInWithEmailAndPassword(e, p); go('chat'); }
-  catch (ex) { err.textContent = fberr(ex.code); }
+  try {
+    if (!supabaseClient) throw new Error('Supabase әлі дайын емес');
+    const { error } = await supabaseClient.auth.signInWithPassword({ email:e, password:p });
+    if (error) throw error;
+    go('chat');
+  }
+  catch (ex) { err.textContent = autherr(ex); }
   setbl('lBtn', false, 'Кіру');
 }
 async function doReg() {
@@ -1493,36 +1514,61 @@ async function doReg() {
   if (!n || !e || !p) { err.textContent = 'Барлық өрісті толтырыңыз'; return; }
   if (p.length < 6) { err.textContent = 'Кемінде 6 символ'; return; }
   setbl('rBtn', true, 'Тіркелу');
-  try { const c = await auth.createUserWithEmailAndPassword(e, p); await c.user.updateProfile({ displayName: n }); go('chat'); }
-  catch (ex) { err.textContent = fberr(ex.code); }
+  try {
+    if (!supabaseClient) throw new Error('Supabase әлі дайын емес');
+    const { data, error } = await supabaseClient.auth.signUp({
+      email:e,
+      password:p,
+      options:{ data:{ display_name:n, full_name:n }, emailRedirectTo:window.location.origin }
+    });
+    if (error) throw error;
+    if (data.session) go('chat');
+    else err.textContent = 'Email-ге келген растау сілтемесін ашыңыз';
+  }
+  catch (ex) { err.textContent = autherr(ex); }
   setbl('rBtn', false, 'Тіркелу');
 }
 async function doGoogle() {
-  try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }
-  catch (ex) { const el = document.getElementById('lErr'); if (el) el.textContent = fberr(ex.code); }
+  try {
+    if (!supabaseClient) throw new Error('Supabase әлі дайын емес');
+    const { error } = await supabaseClient.auth.signInWithOAuth({
+      provider:'google',
+      options:{ redirectTo:window.location.origin }
+    });
+    if (error) throw error;
+  }
+  catch (ex) { const el = document.getElementById('lErr'); if (el) el.textContent = autherr(ex); }
 }
-const fberr = c => ({'auth/user-not-found':'Email тіркелмеген','auth/wrong-password':'Қате құпия сөз','auth/email-already-in-use':'Email бұрын тіркелген','auth/weak-password':'Сөз тым қарапайым','auth/invalid-email':'Email форматы дұрыс емес','auth/popup-closed-by-user':'Жабылды'})[c] || 'Қате орын алды';
+const autherr = error => ({
+  invalid_credentials:'Email немесе құпия сөз қате',
+  email_not_confirmed:'Алдымен email адресіңізді растаңыз',
+  user_already_exists:'Email бұрын тіркелген',
+  weak_password:'Құпия сөз тым қарапайым',
+  validation_failed:'Email форматы дұрыс емес',
+  over_email_send_rate_limit:'Хаттар тым жиі жіберілді. Кейінірек көріңіз.'
+})[error?.code] || error?.message || 'Қате орын алды';
 const setbl = (id, l, t) => { const b = document.getElementById(id); b.disabled = l; b.textContent = l ? 'Күте тұрыңыз...' : t; };
 
 async function callAI(task, payload = {}, mayRetry = true) {
-  const user = auth.currentUser;
-  if (!user) {
+  if (!currentUser || !currentSession?.access_token) {
     showAuth('login');
     throw new Error('AI қолдану үшін жүйеге кіріңіз');
   }
 
-  const token = await user.getIdToken(false);
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
+      'Authorization': `Bearer ${currentSession.access_token}`
     },
     body: JSON.stringify({ task, ...payload })
   });
 
   if (response.status === 401 && mayRetry) {
-    await user.getIdToken(true);
+    const { data, error } = await supabaseClient.auth.refreshSession();
+    if (error || !data.session) throw new Error('Қайта кіріп көріңіз');
+    currentSession = data.session;
+    currentUser = data.session.user;
     return callAI(task, payload, false);
   }
 
@@ -1700,19 +1746,23 @@ function dayIndex(value) {
 }
 function queueProgressSync() {
   clearTimeout(progressSyncTimer);
-  progressSyncTimer=setTimeout(()=>{
-    const user=auth.currentUser;
-    if (!user) return;
-    db.ref(`progress/${user.uid}`).set({stats:getStats(),xp:getXP(),updatedAt:firebase.database.ServerValue.TIMESTAMP})
-      .catch(error=>console.warn('Progress sync failed',error?.code||error?.message));
+  progressSyncTimer=setTimeout(async()=>{
+    if (!currentUser || !supabaseClient) return;
+    const { error } = await supabaseClient.from('progress').upsert({
+      user_id:currentUser.id,
+      stats:getStats(),
+      xp:getXP(),
+      updated_at:new Date().toISOString()
+    },{onConflict:'user_id'});
+    if (error) console.warn('Progress sync failed',error.code||error.message);
   },500);
 }
 async function loadProgress() {
-  const user=auth.currentUser;
-  if (!user) return;
+  if (!currentUser || !supabaseClient) return;
   try {
-    const snap=await db.ref(`progress/${user.uid}`).once('value');
-    const cloud=snap.val();
+    const { data:cloud, error } = await supabaseClient.from('progress')
+      .select('stats,xp').eq('user_id',currentUser.id).maybeSingle();
+    if (error) throw error;
     if (cloud?.stats) localStorage.setItem(STAT_KEY,JSON.stringify(cloud.stats));
     if (Number.isFinite(Number(cloud?.xp))) localStorage.setItem(XP_KEY,String(cloud.xp));
     if (!cloud) queueProgressSync();
@@ -1789,17 +1839,24 @@ function calcStreak() {
   return last!==null&&today-last<=1?Number(s.streak||1):0;
 }
 
-/* ═══ FIREBASE HISTORY ═══ */
-function saveChat(first) {
-  const u = auth.currentUser; if (!u) return;
-  if (!chatId) chatId = db.ref(`chats/${u.uid}`).push().key;
+/* ═══ SUPABASE HISTORY ═══ */
+async function saveChat(first) {
+  if (!currentUser || !supabaseClient) return;
+  if (!chatId) chatId = crypto.randomUUID();
   const title = first.length > 40 ? first.slice(0,40)+'…' : first;
-  db.ref(`chats/${u.uid}/${chatId}`).set({title, messages:msgs, updatedAt:Date.now()});
+  const row={id:chatId,user_id:currentUser.id,title,messages:msgs.slice(-40),updated_at:new Date().toISOString()};
+  const { error } = await supabaseClient.from('chats').upsert(row,{onConflict:'id'});
+  if (error) { console.warn('Chat save failed',error.code||error.message); return; }
+  hist=[{id:row.id,title:row.title,messages:row.messages,updated_at:row.updated_at},...hist.filter(ch=>ch.id!==row.id)].slice(0,60);
+  renderHist();
 }
-function loadHistory() {
-  const u = auth.currentUser; if (!u) return;
-  db.ref(`chats/${u.uid}`).orderByChild('updatedAt').limitToLast(60)
-    .on('value', snap => { hist=[]; snap.forEach(c => hist.unshift({id:c.key,...c.val()})); renderHist(); });
+async function loadHistory() {
+  if (!currentUser || !supabaseClient) return;
+  const { data, error } = await supabaseClient.from('chats')
+    .select('id,title,messages,updated_at').order('updated_at',{ascending:false}).limit(60);
+  if (error) { console.warn('History load failed',error.code||error.message); return; }
+  hist=data||[];
+  renderHist();
 }
 function clearHistUI() { hist=[]; renderHist(); }
 function renderHist() {
@@ -2007,6 +2064,12 @@ document.head.appendChild(s);
 
 /* ═══ INIT ═══ */
 initFlashcards();
+initSupabase().catch(error => {
+  console.error('Supabase init failed:',error?.message);
+  showAuth('login');
+  const el=document.getElementById('lErr');
+  if(el) el.textContent='Supabase баптауы аяқталмаған';
+});
 </script>
 </body>
 </html>

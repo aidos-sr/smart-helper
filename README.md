@@ -1,58 +1,74 @@
 # Smart Helper
 
-Қазақ және орыс тілдерінде жұмыс істейтін AI оқу көмекшісі. Чат, мәтін құралдары, оқу жоспары, flashcard және тест генераторы Qwen арқылы серверде орындалады.
+AI-помощник для учёбы на казахском и русском языках. Чат, обработка текста, учебные планы, карточки и тесты работают через размещённую модель Qwen — локальный запуск модели не нужен.
 
 ## Архитектура
 
 ```text
-Browser → /api/chat (Vercel Function) → OpenRouter → qwen/qwen3.5-9b
-                       ↓
-                 Firebase Auth + Realtime Database rate limits
+Браузер ── Supabase Auth + Postgres (RLS)
+   │
+   └── /api/chat (Vercel Function) ── OpenRouter ── qwen/qwen3.5-9b
+              │
+              └── Supabase RPC: атомарные лимиты запросов
 ```
 
-API кілттері браузерге жіберілмейді. Әр сұрауда Firebase ID token тексеріледі. Сервер минуттық және күндік лимитті Firebase транзакциясымен атомарлы есептейді.
+Публичный ключ Supabase передаётся браузеру через `/api/config`. Секретные ключи Supabase и OpenRouter читаются только серверной функцией.
 
-## Қажетті баптаулар
+## Настройка Supabase
 
-1. OpenRouter-ден API key жасаңыз.
-2. Firebase Console → Project settings → Service accounts → Generate new private key арқылы service account JSON жүктеңіз.
-3. Vercel жобасының **Settings → Environment Variables** бөлімінде `.env.example` ішіндегі айнымалыларды қосыңыз.
-4. `FIREBASE_SERVICE_ACCOUNT_JSON` мәніне service account файлының толық JSON мазмұнын салыңыз.
-5. Firebase Realtime Database rules ретінде `firebase-database.rules.json` файлын қолданыңыз.
-6. Environment variables өзгергеннен кейін жаңа deployment жасаңыз.
+1. Создайте проект на [supabase.com](https://supabase.com/dashboard).
+2. Откройте **SQL Editor**, вставьте содержимое [`supabase/migrations/202608060001_initial.sql`](supabase/migrations/202608060001_initial.sql) и выполните запрос.
+3. В **Project Settings → API Keys** скопируйте:
+   - Project URL;
+   - Publishable key (`sb_publishable_…`) для браузера;
+   - Secret key (`sb_secret_…`) для сервера.
+4. В **Authentication → URL Configuration** задайте адрес сайта как Site URL и добавьте Vercel preview/production URL в Redirect URLs.
+5. Для входа Google включите провайдер в **Authentication → Providers → Google** и добавьте показанный Supabase callback URL в Google Cloud Console.
 
-Маңызды: `.env` және service account JSON файлдарын Git-ке қоспаңыз.
+SQL-миграция создаёт таблицы `chats`, `progress`, `ai_usage`, включает RLS и разрешает пользователю видеть и менять только собственные чаты и прогресс. `ai_usage` доступна только серверной роли.
 
-## Environment variables
+## Переменные окружения Vercel
 
-| Name | Міндетті | Мәні |
+Добавьте значения из `.env.example` в **Vercel → Project → Settings → Environment Variables**:
+
+| Name | Обязательно | Значение |
 |---|---:|---|
-| `OPENROUTER_API_KEY` | Иә | OpenRouter құпия кілті |
-| `FIREBASE_DATABASE_URL` | Иә | Firebase Realtime Database URL |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | Иә | Firebase Admin service account JSON |
-| `OPENROUTER_MODEL` | Жоқ | Әдепкісі `qwen/qwen3.5-9b` |
-| `PUBLIC_SITE_URL` | Жоқ | Vercel сайт адресі |
-| `AI_MINUTE_LIMIT` | Жоқ | Әдепкісі 10 сұрау/минут |
-| `AI_DAILY_LIMIT` | Жоқ | Әдепкісі 100 сұрау/күн |
+| `SUPABASE_URL` | Да | Project URL из Supabase |
+| `SUPABASE_PUBLISHABLE_KEY` | Да | Публичный `sb_publishable_…` |
+| `SUPABASE_SECRET_KEY` | Да | Серверный `sb_secret_…` |
+| `OPENROUTER_API_KEY` | Да | Секретный ключ OpenRouter |
+| `OPENROUTER_MODEL` | Нет | По умолчанию `qwen/qwen3.5-9b` |
+| `PUBLIC_SITE_URL` | Нет | Адрес сайта на Vercel |
+| `AI_MINUTE_LIMIT` | Нет | По умолчанию 10 запросов в минуту |
+| `AI_DAILY_LIMIT` | Нет | По умолчанию 100 запросов в день |
 
-## Локалды тексеру
+Код также понимает старые имена `SUPABASE_ANON_KEY` и `SUPABASE_SERVICE_ROLE_KEY`, но для новых проектов рекомендуются publishable/secret keys.
 
-Node.js 20+ орнатып:
+После изменения переменных создайте новый deployment. Не отправляйте `SUPABASE_SECRET_KEY` и `OPENROUTER_API_KEY` в чат и не добавляйте их в Git.
+
+## Локальный запуск
+
+Нужен Node.js 24+:
 
 ```bash
 npm install
 npx vercel dev
 ```
 
-Vercel айнымалыларын локалды ортаға жүктеу үшін `vercel env pull` қолданыңыз.
+Для локального `.env` скопируйте `.env.example`, замените значения и сохраните файл как `.env`; он исключён из Git.
 
-## Қауіпсіздік
+## Что хранится в Supabase
 
-- OpenRouter және Firebase Admin құпиялары тек серверде оқылады.
-- API Firebase авторизациясынсыз жұмыс істемейді.
-- Кіріс өлшемі, тарих ұзындығы және тапсырма параметрлері шектелген.
-- Planner, flashcard және quiz нәтижелері JSON Schema арқылы тексеріледі.
-- `aiUsage` жолына браузерден кіруге Firebase rules тыйым салады; оны тек Admin SDK өзгертеді.
-- Қолданыс шығынын қосымша шектеу үшін OpenRouter аккаунтында spending limit орнатыңыз.
+- Supabase Auth: email/password и Google OAuth.
+- `chats`: последние 60 диалогов пользователя.
+- `progress`: статистика и XP.
+- `ai_usage`: минутные и дневные лимиты AI, изменяемые только сервером.
 
-Қазіргі бір файлдық frontend inline script/style қолданады, сондықтан CSP ішінде уақытша `unsafe-inline` бар. Кодты бөлек CSS/JS модульдеріне шығарғаннан кейін оны nonce/hash негізіндегі қатаң CSP-ге ауыстыру керек.
+Все пользовательские таблицы защищены Row Level Security. Сервер дополнительно проверяет актуального пользователя через `auth.getUser(access_token)` перед обращением к модели.
+
+## Ограничения и безопасность
+
+- Входные данные, длина истории и параметры AI-инструментов ограничены.
+- Planner, flashcard и quiz запрашивают структурированный ответ по JSON Schema.
+- Для контроля расходов задайте spending limit в OpenRouter.
+- Frontend пока остаётся одним HTML-файлом с inline CSS/JS, поэтому CSP временно содержит `unsafe-inline`. Следующий логичный рефакторинг — вынести стили и скрипты в отдельные файлы и убрать это разрешение.
