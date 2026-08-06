@@ -1000,7 +1000,7 @@ body::after {
           <div class="tc-title">Мәтін қысқарту</div>
           <div class="tc-desc">Ұзын мәтінді қысқа және нақты мазмұнға айналдырады</div>
           <textarea class="tc-area" id="sumIn" placeholder="Қысқартылатын мәтінді енгізіңіз..."></textarea>
-          <button class="bpri" style="font-size:.82rem;padding:9px 18px" onclick="runTool('sum')">Қысқарту</button>
+          <button class="bpri" style="font-size:.82rem;padding:9px 18px" onclick="runTool('sum',this)">Қысқарту</button>
           <div class="tc-result" id="sumOut"></div>
         </div>
         <div class="tool-card">
@@ -1013,7 +1013,7 @@ body::after {
             <option value="ағылшын тіліне">Ағылшын тіліне</option>
           </select>
           <textarea class="tc-area" id="transIn" placeholder="Аударылатын мәтінді енгізіңіз..."></textarea>
-          <button class="bpri" style="font-size:.82rem;padding:9px 18px" onclick="runTool('trans')">Аудару</button>
+          <button class="bpri" style="font-size:.82rem;padding:9px 18px" onclick="runTool('trans',this)">Аудару</button>
           <div class="tc-result" id="transOut"></div>
         </div>
         <div class="tool-card">
@@ -1021,7 +1021,7 @@ body::after {
           <div class="tc-title">Қателерді түзету</div>
           <div class="tc-desc">Грамматикалық және стильдік қателерді анықтап, түзетеді</div>
           <textarea class="tc-area" id="fixIn" placeholder="Тексерілетін мәтінді енгізіңіз..."></textarea>
-          <button class="bpri" style="font-size:.82rem;padding:9px 18px" onclick="runTool('fix')">Түзету</button>
+          <button class="bpri" style="font-size:.82rem;padding:9px 18px" onclick="runTool('fix',this)">Түзету</button>
           <div class="tc-result" id="fixOut"></div>
         </div>
         <div class="tool-card">
@@ -1029,7 +1029,7 @@ body::after {
           <div class="tc-title">Идея генерациясы</div>
           <div class="tc-desc">Тақырып бойынша шығармашыл идеялар ұсынады</div>
           <textarea class="tc-area" id="ideaIn" placeholder="Тақырып немесе мақсат жазыңыз..." style="min-height:70px"></textarea>
-          <button class="bpri" style="font-size:.82rem;padding:9px 18px" onclick="runTool('idea')">Идея ұсын</button>
+          <button class="bpri" style="font-size:.82rem;padding:9px 18px" onclick="runTool('idea',this)">Идея ұсын</button>
           <div class="tc-result" id="ideaOut"></div>
         </div>
       </div>
@@ -1399,7 +1399,6 @@ firebase.initializeApp({
 });
 const auth = firebase.auth();
 const db   = firebase.database();
-const CLAUDE = 'YOUR_CLAUDE_API_KEY';
 
 /* ═══ THEME ═══ */
 const tbtn = document.getElementById('tbtn');
@@ -1453,6 +1452,7 @@ auth.onAuthStateChanged(user => {
   if (user) {
     document.getElementById('ubadge').textContent = user.displayName || user.email.split('@')[0];
     loadHistory();
+    loadProgress();
     if (!_authReady) go('chat');
   } else {
     clearHistUI();
@@ -1504,17 +1504,39 @@ async function doGoogle() {
 const fberr = c => ({'auth/user-not-found':'Email тіркелмеген','auth/wrong-password':'Қате құпия сөз','auth/email-already-in-use':'Email бұрын тіркелген','auth/weak-password':'Сөз тым қарапайым','auth/invalid-email':'Email форматы дұрыс емес','auth/popup-closed-by-user':'Жабылды'})[c] || 'Қате орын алды';
 const setbl = (id, l, t) => { const b = document.getElementById(id); b.disabled = l; b.textContent = l ? 'Күте тұрыңыз...' : t; };
 
+async function callAI(task, payload = {}, mayRetry = true) {
+  const user = auth.currentUser;
+  if (!user) {
+    showAuth('login');
+    throw new Error('AI қолдану үшін жүйеге кіріңіз');
+  }
+
+  const token = await user.getIdToken(false);
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({ task, ...payload })
+  });
+
+  if (response.status === 401 && mayRetry) {
+    await user.getIdToken(true);
+    return callAI(task, payload, false);
+  }
+
+  let data = {};
+  try { data = await response.json(); } catch {}
+  if (!response.ok) throw new Error(data.error || 'AI сервисі уақытша қолжетімсіз');
+  return data;
+}
+
 /* ═══ CHAT ═══ */
 let msgs = [], chatId = null, hist = [], curMode = 'general';
 const msa = document.getElementById('msa');
 const cta = document.getElementById('cta');
 const sndbtn = document.getElementById('sndbtn');
-const MODES = {
-  general: 'Сен — Smart Helper деп аталатын ақылды оқу серігісің. Қазақ тілінде жауап бер. Анық, пайдалы, ынталандырушы бол.',
-  math:    'Сен — математика пәнінің ақылды мұғалімісің. Есептерді қадамбе-қадам түсіндір. Тек математика туралы жауап бер.',
-  history: 'Сен — тарих пәнінің сарапшысысың. Тарихи оқиғаларды, тұлғаларды, мерзімдерді дәл жеткіз. Қазақстан тарихын ерекше атап өт.',
-  science: 'Сен — жаратылыстану ғылымдарының мұғалімісің. Ғылыми тұжырымдарды қарапайым, нақты түсіндір.',
-};
 
 function setMode(btn) {
   document.querySelectorAll('.modesel').forEach(b => b.classList.remove('on'));
@@ -1559,19 +1581,17 @@ async function sendMsg() {
   sndbtn.disabled = true;
   const tid = 'td' + Date.now();
   addTyping(tid);
-  addStat('q', curMode); addXP(10); renderStats();
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': CLAUDE, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1500, system: MODES[curMode], messages: msgs })
-    });
-    const d = await r.json();
-    const reply = d.content?.[0]?.text || 'Жауап алынбады';
+    const d = await callAI('chat', { mode: curMode, messages: msgs });
+    const reply = d.text || 'Жауап алынбады';
     rmEl(tid); addBubble(reply, false);
     msgs.push({ role: 'assistant', content: reply });
+    addStat('q', curMode); addXP(10); renderStats();
     if (msgs.length === 2) saveChat(txt); else saveChat(msgs[0].content);
-  } catch { rmEl(tid); addBubble('Қате орын алды. API кілтін тексеріңіз.', false); }
+  } catch (error) {
+    rmEl(tid);
+    addBubble(error.message || 'AI сервисі уақытша қолжетімсіз.', false);
+  }
   sndbtn.disabled = false;
 }
 
@@ -1611,8 +1631,12 @@ function rmEl(id) { document.getElementById(id)?.remove(); }
 function rateMsg(btn, type) {
   const row = btn.closest('.rate-row');
   const btns = row.querySelectorAll('.act-btn');
-  if (type === 'good') { btn.classList.toggle('liked'); btns[2]?.classList.remove('disliked'); addStat('r', btn.classList.contains('liked') ? 'good' : ''); }
-  else { btn.classList.toggle('disliked'); btns[1]?.classList.remove('liked'); addStat('r', btn.classList.contains('disliked') ? 'bad' : ''); }
+  const previous = row.dataset.rating || '';
+  const next = previous === type ? '' : type;
+  row.dataset.rating = next;
+  btns[1]?.classList.toggle('liked', next === 'good');
+  btns[2]?.classList.toggle('disliked', next === 'bad');
+  addStat('r', { previous, next });
   renderStats();
 }
 function copyMsg(btn, id) {
@@ -1632,6 +1656,7 @@ function editMsg(btn, id) {
 
 /* ═══ STATS & XP ═══ */
 const STAT_KEY = 'sh-stats', XP_KEY = 'sh-xp';
+let progressSyncTimer = null;
 const XP_LEVELS = [
   { min:0,    name:'Жаңадан бастаушы', next:100   },
   { min:100,  name:'Оқушы',            next:300   },
@@ -1653,18 +1678,63 @@ const ACHIEVEMENTS = [
   { id:'plan',    icon:'📅', name:'Жоспарлаушы',   desc:'3 жоспар',   req:s => (s.plans||0) >= 3 },
 ];
 function getStats() {
-  try { return JSON.parse(localStorage.getItem(STAT_KEY)) || {total:0,today:0,good:0,bad:0,lastDate:'',subjects:{},quizzes:0,cards:0,plans:0}; }
-  catch { return {total:0,today:0,good:0,bad:0,lastDate:'',subjects:{},quizzes:0,cards:0,plans:0}; }
+  const empty = {total:0,today:0,good:0,bad:0,lastDate:'',streak:0,subjects:{},quizzes:0,cards:0,plans:0};
+  try {
+    const stored = JSON.parse(localStorage.getItem(STAT_KEY));
+    return stored ? {...empty,...stored,subjects:{...empty.subjects,...(stored.subjects||{})}} : empty;
+  } catch { return empty; }
 }
-function saveStats(s) { localStorage.setItem(STAT_KEY, JSON.stringify(s)); }
+function saveStats(s) { localStorage.setItem(STAT_KEY, JSON.stringify(s)); queueProgressSync(); }
 function getXP() { return parseInt(localStorage.getItem(XP_KEY) || '0'); }
-function addXP(n) { localStorage.setItem(XP_KEY, getXP() + n); }
+function addXP(n) { localStorage.setItem(XP_KEY, getXP() + n); queueProgressSync(); }
+
+function localDateKey(date = new Date()) {
+  const y=date.getFullYear(),m=String(date.getMonth()+1).padStart(2,'0'),d=String(date.getDate()).padStart(2,'0');
+  return `${y}-${m}-${d}`;
+}
+function dayIndex(value) {
+  if (!value) return null;
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00`) : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return Math.floor(new Date(parsed.getFullYear(),parsed.getMonth(),parsed.getDate()).getTime()/86400000);
+}
+function queueProgressSync() {
+  clearTimeout(progressSyncTimer);
+  progressSyncTimer=setTimeout(()=>{
+    const user=auth.currentUser;
+    if (!user) return;
+    db.ref(`progress/${user.uid}`).set({stats:getStats(),xp:getXP(),updatedAt:firebase.database.ServerValue.TIMESTAMP})
+      .catch(error=>console.warn('Progress sync failed',error?.code||error?.message));
+  },500);
+}
+async function loadProgress() {
+  const user=auth.currentUser;
+  if (!user) return;
+  try {
+    const snap=await db.ref(`progress/${user.uid}`).once('value');
+    const cloud=snap.val();
+    if (cloud?.stats) localStorage.setItem(STAT_KEY,JSON.stringify(cloud.stats));
+    if (Number.isFinite(Number(cloud?.xp))) localStorage.setItem(XP_KEY,String(cloud.xp));
+    if (!cloud) queueProgressSync();
+    renderStats();
+  } catch (error) { console.warn('Progress load failed',error?.code||error?.message); }
+}
 function addStat(type, val) {
   const s = getStats();
-  const today = new Date().toDateString();
-  if (s.lastDate !== today) { s.today = 0; s.lastDate = today; }
+  const today = localDateKey();
+  if (s.lastDate !== today && type === 'q') {
+    const previousDay=dayIndex(s.lastDate),currentDay=dayIndex(today);
+    s.streak=previousDay!==null&&currentDay-previousDay===1?Math.max(1,Number(s.streak)||1)+1:1;
+    s.today=0;
+    s.lastDate=today;
+  }
   if (type === 'q') { s.total++; s.today++; s.subjects[val] = (s.subjects[val]||0) + 1; }
-  else if (type === 'r') { if (val === 'good') s.good++; else s.bad++; }
+  else if (type === 'r') {
+    if (val.previous === 'good') s.good=Math.max(0,s.good-1);
+    if (val.previous === 'bad') s.bad=Math.max(0,s.bad-1);
+    if (val.next === 'good') s.good++;
+    if (val.next === 'bad') s.bad++;
+  }
   else if (type === 'quiz') s.quizzes = (s.quizzes||0) + 1;
   else if (type === 'card') s.cards = (s.cards||0) + 1;
   else if (type === 'plan') s.plans = (s.plans||0) + 1;
@@ -1715,9 +1785,8 @@ function renderStats() {
 }
 function calcStreak() {
   const s = getStats(); if (!s.lastDate) return 0;
-  const diff = Math.floor((new Date()-new Date(s.lastDate))/86400000);
-  const streak = parseInt(localStorage.getItem('sh-streak')||'1');
-  return diff <= 1 ? streak : 0;
+  const last=dayIndex(s.lastDate),today=dayIndex(localDateKey());
+  return last!==null&&today-last<=1?Number(s.streak||1):0;
 }
 
 /* ═══ FIREBASE HISTORY ═══ */
@@ -1747,22 +1816,31 @@ function renderHist() {
 function hlHist() { document.querySelectorAll('.hi').forEach((el,i) => el.classList.toggle('on',hist[i]?.id===chatId)); }
 
 /* ═══ AI TOOLS ═══ */
-async function runTool(type) {
+async function runTool(type, btn) {
   const configs = {
-    sum:   {inId:'sumIn',   outId:'sumOut',   prompt:t=>`Осы мәтінді 3-5 сөйлемге дейін қысқарт:\n\n${t}`},
-    trans: {inId:'transIn', outId:'transOut', prompt:t=>`Осы мәтінді ${document.getElementById('transLang').value} аудар:\n\n${t}`},
-    fix:   {inId:'fixIn',   outId:'fixOut',   prompt:t=>`Осы мәтіндегі қателерді түзет. Тек түзетілген нұсқаны жаз:\n\n${t}`},
-    idea:  {inId:'ideaIn',  outId:'ideaOut',  prompt:t=>`Осы тақырып бойынша 5 идея ұсын:\n\n${t}`},
+    sum:   {inId:'sumIn',   outId:'sumOut'},
+    trans: {inId:'transIn', outId:'transOut'},
+    fix:   {inId:'fixIn',   outId:'fixOut'},
+    idea:  {inId:'ideaIn',  outId:'ideaOut'},
   };
   const cfg = configs[type];
+  if (!cfg) return;
   const inp = document.getElementById(cfg.inId).value.trim();
   const out = document.getElementById(cfg.outId);
   if (!inp) { out.textContent='Мәтін енгізіңіз'; out.classList.add('show'); return; }
+  const original = btn?.innerHTML;
+  if (btn) btn.disabled = true;
   out.className='tc-result show'; out.innerHTML='<span class="tloading">Өңделуде...</span>';
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':CLAUDE,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:800,system:'Сен қазақ тілінде жұмыс істейтін AI.',messages:[{role:'user',content:cfg.prompt(inp)}]})});
-    const d = await r.json(); out.textContent = d.content?.[0]?.text||'Жауап алынбады';
-  } catch { out.textContent='Қате орын алды.'; }
+    const payload = { input: inp };
+    if (type === 'trans') payload.targetLanguage = document.getElementById('transLang').value;
+    const response = await callAI(type, payload);
+    out.textContent = response.text || 'Жауап алынбады';
+  } catch (error) {
+    out.textContent = error.message || 'Қате орын алды.';
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = original; }
+  }
 }
 
 /* ═══ STUDY PLANNER ═══ */
@@ -1772,19 +1850,44 @@ async function runPlanner() {
   const btn=document.getElementById('planBtn'); btn.disabled=true; btn.textContent='Жасалуда...';
   const result=document.getElementById('planResult');
   result.innerHTML='<div class="plan-empty"><span class="tloading" style="display:inline-flex">Жасалуда...</span></div>';
-  const prompt=`Оқушыға ${days} күндік оқу жоспары жаса.\nТақырып: ${topic}\nМақсат: ${goal||'жалпы оқу'}\nКүніне: ${hours} сағат\nТек JSON:\n{"days":[{"day":1,"title":"...","tasks":"...","subject":"math|sci|hist|gen"}]}`;
   try {
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':CLAUDE,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1500,messages:[{role:'user',content:prompt}]})});
-    const d=await r.json();
-    const plan=JSON.parse((d.content?.[0]?.text||'{}').replace(/```json|```/g,'').trim());
-    result.innerHTML='';
-    plan.days.forEach(day=>{
-      const tags={math:'tag-math',sci:'tag-sci',hist:'tag-hist',gen:'tag-gen'},labels={math:'Математика',sci:'Ғылым',hist:'Тарих',gen:'Жалпы'};
-      result.innerHTML+=`<div class="plan-item"><div class="plan-day"><div class="plan-day-n">${day.day}</div><div class="plan-day-l">КҮН</div></div><div class="plan-content"><h4>${day.title}</h4><p>${day.tasks}</p><span class="plan-tag ${tags[day.subject]||'tag-gen'}">${labels[day.subject]||'Жалпы'}</span></div></div>`;
-    });
+    const response=await callAI('planner',{topic,goal,days:Number(days),hours:Number(hours)});
+    const plan=response.data;
+    if (!Array.isArray(plan?.days) || !plan.days.length) throw new Error('Жоспар алынбады');
+    renderPlan(plan.days, result);
     addStat('plan',1); addXP(20);
-  } catch { result.innerHTML='<p style="color:var(--ac4);padding:16px">Қате орын алды.</p>'; }
+  } catch (error) {
+    result.textContent=error.message||'Қате орын алды.';
+    result.style.color='var(--ac4)';
+    result.style.padding='16px';
+  }
   btn.disabled=false; btn.innerHTML=`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Жоспар жасау`;
+}
+
+function renderPlan(days, result) {
+  const tags={math:'tag-math',sci:'tag-sci',hist:'tag-hist',gen:'tag-gen'};
+  const labels={math:'Математика',sci:'Ғылым',hist:'Тарих',gen:'Жалпы'};
+  result.replaceChildren();
+  result.style.color='';
+  result.style.padding='';
+
+  days.forEach(day=>{
+    const item=document.createElement('div'); item.className='plan-item';
+    const dayBox=document.createElement('div'); dayBox.className='plan-day';
+    const dayNumber=document.createElement('div'); dayNumber.className='plan-day-n'; dayNumber.textContent=String(day.day);
+    const dayLabel=document.createElement('div'); dayLabel.className='plan-day-l'; dayLabel.textContent='КҮН';
+    dayBox.append(dayNumber,dayLabel);
+
+    const content=document.createElement('div'); content.className='plan-content';
+    const title=document.createElement('h4'); title.textContent=String(day.title||'');
+    const tasks=document.createElement('p'); tasks.textContent=String(day.tasks||'');
+    const tag=document.createElement('span');
+    const subject=Object.hasOwn(tags,day.subject)?day.subject:'gen';
+    tag.className=`plan-tag ${tags[subject]}`; tag.textContent=labels[subject];
+    content.append(title,tasks,tag);
+    item.append(dayBox,content);
+    result.appendChild(item);
+  });
 }
 
 /* ═══ FLASHCARDS ═══ */
@@ -1835,13 +1938,11 @@ function nextCard() { fcIdx=(fcIdx+1)%fcCards.length; showCard(); }
 async function genFlashcards() {
   const topic=document.getElementById('fcGenTopic').value.trim(); if(!topic) return;
   const btn=document.getElementById('fcGenBtn'); btn.disabled=true; btn.textContent='Жасалуда...';
-  const prompt=`"${topic}" тақырыбы бойынша 6 flashcard жаса. Тек JSON:\n{"cards":[{"q":"сұрақ","a":"жауап"}]}`;
   try {
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':CLAUDE,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:800,messages:[{role:'user',content:prompt}]})});
-    const d=await r.json();
-    const parsed=JSON.parse((d.content?.[0]?.text||'{}').replace(/```json|```/g,'').trim());
+    const response=await callAI('flashcards',{topic});
+    const parsed=response.data;
     if(parsed.cards?.length){fcCards=parsed.cards;fcIdx=0;document.getElementById('fcProgress').textContent=`1/${fcCards.length}`;showCard();document.getElementById('fcGenTopic').value='';}
-  } catch {}
+  } catch (error) { alert(error.message||'Қате орын алды'); }
   btn.disabled=false; btn.innerHTML=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> AI карточкалар жасау`;
 }
 
@@ -1851,13 +1952,11 @@ async function genQuiz() {
   const topic=document.getElementById('quizTopic').value.trim(),count=document.getElementById('quizCount').value;
   if(!topic) return;
   const btn=document.getElementById('quizGenBtn'); btn.disabled=true; btn.textContent='Жасалуда...';
-  const prompt=`"${topic}" тақырыбы бойынша ${count} тест сұрағы. Тек JSON:\n{"questions":[{"q":"сұрақ","opts":["А","Б","В","Г"],"correct":0}]}\ncorrect — дұрыс жауаптың индексі (0-3).`;
   try {
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':CLAUDE,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:prompt}]})});
-    const d=await r.json();
-    const parsed=JSON.parse((d.content?.[0]?.text||'{}').replace(/```json|```/g,'').trim());
+    const response=await callAI('quiz',{topic,count:Number(count)});
+    const parsed=response.data;
     if(parsed.questions?.length){quizQuestions=parsed.questions;quizCurrent=0;quizScore=0;document.getElementById('quizSetup').style.display='none';document.getElementById('quizActive').style.display='block';showQuizQ();}
-  } catch { alert('Қате орын алды'); }
+  } catch (error) { alert(error.message||'Қате орын алды'); }
   btn.disabled=false; btn.innerHTML=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Тест жасау`;
 }
 function showQuizQ() {
@@ -1876,7 +1975,7 @@ function answerQuiz(idx) {
   const q=quizQuestions[quizCurrent],btns=document.querySelectorAll('.quiz-opt');
   btns.forEach(b=>b.classList.add('disabled')); btns[q.correct].classList.add('correct');
   if(idx===q.correct){quizScore++;addXP(15);}else{btns[idx].classList.add('wrong');}
-  addStat('quiz',1); setTimeout(()=>{quizCurrent++;showQuizQ();},1200);
+  setTimeout(()=>{quizCurrent++;showQuizQ();},1200);
 }
 function showQuizResult() {
   document.getElementById('quizActive').style.display='none';
@@ -1884,6 +1983,7 @@ function showQuizResult() {
   const pct=Math.round(quizScore/quizQuestions.length*100);
   document.getElementById('quizScoreN').textContent=`${quizScore}/${quizQuestions.length}`;
   document.getElementById('quizScoreMsg').textContent=['Жалғастыр!','Жаман емес!','Жақсы!','Өте жақсы!','Керемет!'][Math.min(4,Math.floor(pct/20))];
+  addStat('quiz',1);
   addXP(quizScore*5);
 }
 function resetQuiz() { document.getElementById('quizResult').style.display='none'; document.getElementById('quizSetup').style.display='block'; }
