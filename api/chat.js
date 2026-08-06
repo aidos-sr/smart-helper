@@ -2,9 +2,21 @@ import { createClient } from '@supabase/supabase-js';
 
 const MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_TIMEOUT_MS = 45_000;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_INPUT_CHARS = 12_000;
 const MAX_CHAT_CHARS = 30_000;
+
+// These models are free, support structured outputs, and are ordered with the
+// fastest current option first. OpenRouter automatically falls back through
+// the list when a free provider is busy or rate-limited.
+const DEFAULT_STRUCTURED_MODELS = Object.freeze([
+  'nvidia/nemotron-nano-9b-v2:free',
+  'openai/gpt-oss-20b:free',
+  'google/gemma-4-26b-a4b-it:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'openrouter/free'
+]);
 
 const MODE_PROMPTS = Object.freeze({
   general:
@@ -108,6 +120,77 @@ function asText(value, max = MAX_INPUT_CHARS) {
 function asBoundedInt(value, min, max, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+}
+
+function getStructuredModels() {
+  const configured = (process.env.OPENROUTER_STRUCTURED_MODELS || '')
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean);
+  return configured.length ? configured : DEFAULT_STRUCTURED_MODELS;
+}
+
+function parseStructuredContent(content) {
+  const source = content.trim().replace(/^\uFEFF/, '');
+  const candidates = [source];
+  const fenced = source.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  if (fenced) candidates.push(fenced);
+  const firstBrace = source.indexOf('{');
+  const lastBrace = source.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(source.slice(firstBrace, lastBrace + 1));
+  }
+
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      return JSON.parse(candidate);
+    } catch {}
+  }
+  throw new Error('INVALID_STRUCTURED_RESPONSE');
+}
+
+function normalizeStructuredResult(task, value, body) {
+  if (!value || typeof value !== 'object') throw new Error('INVALID_STRUCTURED_RESPONSE');
+
+  if (task === 'flashcards') {
+    const cards = Array.isArray(value.cards)
+      ? value.cards
+          .filter((card) => typeof card?.q === 'string' && typeof card?.a === 'string')
+          .map((card) => ({ q: card.q.trim(), a: card.a.trim() }))
+          .filter((card) => card.q && card.a)
+          .slice(0, 6)
+      : [];
+    if (cards.length < 3) throw new Error('INVALID_STRUCTURED_RESPONSE');
+    return { cards };
+  }
+
+  if (task === 'quiz') {
+    const count = asBoundedInt(body.count, 3, 15, 5);
+    const questions = Array.isArray(value.questions)
+      ? value.questions
+          .filter(
+            (question) =>
+              typeof question?.q === 'string' &&
+              Array.isArray(question.opts) &&
+              question.opts.length === 4 &&
+              question.opts.every((option) => typeof option === 'string') &&
+              Number.isInteger(question.correct) &&
+              question.correct >= 0 &&
+              question.correct <= 3
+          )
+          .map((question) => ({
+            q: question.q.trim(),
+            opts: question.opts.map((option) => option.trim()),
+            correct: question.correct
+          }))
+          .filter((question) => question.q && question.opts.every(Boolean))
+          .slice(0, count)
+      : [];
+    if (questions.length < 3) throw new Error('INVALID_STRUCTURED_RESPONSE');
+    return { questions };
+  }
+
+  return value;
 }
 
 let supabaseAdmin;
@@ -319,6 +402,7 @@ export default async function handler(req, res) {
   }
 
   let modelRequest;
+  const task = typeof req.body?.task === 'string' ? req.body.task : 'chat';
   try {
     modelRequest = buildModelRequest(req.body || {});
   } catch (error) {
@@ -330,9 +414,17 @@ export default async function handler(req, res) {
     return json(res, 400, { error: messages[error.message] || 'Сұрау дұрыс емес' });
   }
 
+  const isStructured = Boolean(modelRequest.response_format);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OPENROUTER_TIMEOUT_MS);
+
   try {
+    const routing = isStructured
+      ? { models: getStructuredModels() }
+      : { model: MODEL };
     const upstream = await fetch(OPENROUTER_URL, {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
@@ -340,10 +432,16 @@ export default async function handler(req, res) {
         'X-OpenRouter-Title': 'Smart Helper'
       },
       body: JSON.stringify({
-        model: MODEL,
+        ...routing,
         ...modelRequest,
         user: user.id,
-        temperature: 0.45,
+        temperature: isStructured ? 0.2 : 0.45,
+        provider: {
+          allow_fallbacks: true,
+          require_parameters: isStructured,
+          sort: 'throughput'
+        },
+        ...(isStructured ? { plugins: [{ id: 'response-healing' }] } : {}),
         stream: false
       })
     });
@@ -351,6 +449,9 @@ export default async function handler(req, res) {
     const data = await upstream.json();
     if (!upstream.ok || data.error) {
       console.error('OpenRouter request failed:', upstream.status, data.error?.code || data.error?.message);
+      if (upstream.status === 429) {
+        return json(res, 503, { error: 'Тегін AI модельдері бос емес. Бір минуттан кейін қайталап көріңіз.' });
+      }
       return json(res, 502, { error: 'AI сервисі уақытша қолжетімсіз' });
     }
 
@@ -366,7 +467,9 @@ export default async function handler(req, res) {
 
     if (modelRequest.response_format) {
       try {
-        return json(res, 200, { data: JSON.parse(content), remaining });
+        const parsed = parseStructuredContent(content);
+        const normalized = normalizeStructuredResult(task, parsed, req.body || {});
+        return json(res, 200, { data: normalized, remaining });
       } catch {
         console.error('Structured AI response was not valid JSON');
         return json(res, 502, { error: 'AI құрылымды жауап қайтара алмады' });
@@ -376,6 +479,11 @@ export default async function handler(req, res) {
     return json(res, 200, { text: content.trim(), remaining });
   } catch (error) {
     console.error('AI proxy failed:', error?.name || error?.message);
+    if (error?.name === 'AbortError') {
+      return json(res, 504, { error: 'AI жауабы тым ұзақ күттірді. Қайтадан көріңіз.' });
+    }
     return json(res, 502, { error: 'AI сервисіне қосылу мүмкін болмады' });
+  } finally {
+    clearTimeout(timeout);
   }
 }
