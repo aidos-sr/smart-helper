@@ -5,756 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Smart Helper — Ақылды Көмекші</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-/* ═══════════════ TOKENS ═══════════════ */
-:root {
-  --bg:     #050608;
-  --bg2:    #080b10;
-  --sf:     #0e1219;
-  --sf2:    #131822;
-  --sf3:    #1a2030;
-  --ac:     #00d4ff;
-  --ac2:    #7c3aed;
-  --ac3:    #00ff88;
-  --ac4:    #ff4d6d;
-  --ac5:    #ffb347;
-  --tx:     #eef2ff;
-  --tx2:    #8892b0;
-  --tx3:    #3d4a68;
-  --bd:     rgba(0,212,255,.07);
-  --bd2:    rgba(0,212,255,.14);
-  --r:      16px;
-  --nav:    60px;
-  --glow:   0 0 40px rgba(0,212,255,.18);
-  --glow2:  0 0 40px rgba(124,58,237,.2);
-}
-[data-theme="light"] {
-  --bg:  #f0f4ff;
-  --bg2: #e8eeff;
-  --sf:  #ffffff;
-  --sf2: #f4f6ff;
-  --sf3: #eaedfc;
-  --tx:  #0a0e1a;
-  --tx2: #4a5280;
-  --tx3: #9fa8c7;
-  --bd:  rgba(0,50,120,.06);
-  --bd2: rgba(0,50,120,.12);
-  --glow:  0 0 40px rgba(0,120,200,.12);
-}
-
-*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
-html { scroll-behavior:smooth; }
-body {
-  background: var(--bg);
-  color: var(--tx);
-  font-family: 'Outfit', sans-serif;
-  font-size: 15px;
-  line-height: 1.6;
-  overflow-x: hidden;
-  transition: background .4s, color .4s;
-}
-a { color:inherit; text-decoration:none; }
-button { font-family:inherit; cursor:pointer; }
-p { color:var(--tx2); }
-
-/* ═══ CANVAS BG ═══ */
-#bg-canvas {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-
-/* ═══ GRAIN OVERLAY ═══ */
-body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 1;
-  opacity: .03;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-size: 256px;
-}
-
-/* ═══ ANIMATIONS ═══ */
-@keyframes fadeUp   { from { opacity:0; transform:translateY(28px) } to { opacity:1; transform:translateY(0) } }
-@keyframes fadeIn   { from { opacity:0 } to { opacity:1 } }
-@keyframes pulse    { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.3;transform:scale(.65)} }
-@keyframes tdot     { 0%,80%,100%{transform:scale(.5);opacity:.3} 40%{transform:scale(1);opacity:1} }
-@keyframes spin     { to { transform:rotate(360deg) } }
-@keyframes slideIn  { from{transform:translateX(-14px);opacity:0} to{transform:translateX(0);opacity:1} }
-@keyframes scaleIn  { from{opacity:0;transform:scale(.88)} to{opacity:1;transform:scale(1)} }
-@keyframes glow-ac  { 0%,100%{box-shadow:0 0 20px rgba(0,212,255,.2)} 50%{box-shadow:0 0 50px rgba(0,212,255,.5)} }
-@keyframes borderRot { to { --angle:360deg } }
-@keyframes float    { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
-@keyframes slideDown { from{transform:translateY(-8px);opacity:0} to{transform:translateY(0);opacity:1} }
-
-.au  { animation:fadeUp .55s cubic-bezier(.16,1,.3,1) both; }
-.d1  { animation-delay:.07s } .d2 { animation-delay:.14s } .d3 { animation-delay:.21s } .d4 { animation-delay:.28s }
-
-/* ═══ NAVBAR ═══ */
-.nav {
-  position: fixed; top:0; left:0; right:0; z-index:300;
-  height: var(--nav);
-  display: flex; align-items:center; justify-content:space-between;
-  padding: 0 28px;
-  background: rgba(5,6,8,.75);
-  backdrop-filter: blur(28px) saturate(1.8);
-  border-bottom: 1px solid var(--bd);
-  transition: background .3s;
-}
-.nav.hidden { display:none }
-[data-theme="light"] .nav { background:rgba(240,244,255,.85); }
-
-.logo {
-  display: flex; align-items:center; gap:10px;
-  font-family: 'Syne', sans-serif;
-  font-weight: 800; font-size:1.05rem;
-  letter-spacing:-.03em; cursor:pointer;
-}
-.logo-icon {
-  width:34px; height:34px; border-radius:10px;
-  background: linear-gradient(135deg, var(--ac), var(--ac2));
-  display:flex; align-items:center; justify-content:center;
-  box-shadow: 0 0 20px rgba(0,212,255,.3);
-  flex-shrink:0;
-}
-.logo-dot {
-  width:7px; height:7px; border-radius:50%;
-  background: var(--ac); box-shadow:0 0 10px var(--ac);
-  animation:pulse 2.2s infinite;
-}
-
-.nlinks { display:flex; gap:2px; }
-.nb {
-  padding:6px 13px; border-radius:8px;
-  font-size:.8rem; font-weight:500; letter-spacing:.01em;
-  color:var(--tx2); background:transparent; border:none;
-  transition:color .2s, background .2s;
-}
-.nb:hover { color:var(--tx); background:rgba(0,212,255,.06); }
-.nb.on { color:var(--ac); background:rgba(0,212,255,.1); }
-
-.nact { display:flex; align-items:center; gap:8px; }
-.tbtn {
-  width:32px; height:32px; border-radius:9px;
-  background:var(--sf2); border:1px solid var(--bd);
-  display:flex; align-items:center; justify-content:center;
-  color:var(--tx2); transition:all .2s;
-}
-.tbtn:hover { background:var(--sf3); color:var(--tx); border-color:var(--bd2); }
-
-.nghost {
-  padding:6px 14px; border-radius:9px;
-  border:1px solid var(--bd2); color:var(--tx2);
-  font-size:.78rem; background:transparent; transition:all .2s;
-}
-.nghost:hover { border-color:var(--ac); color:var(--ac); }
-
-.npri {
-  padding:6px 16px; border-radius:9px;
-  background:linear-gradient(135deg,var(--ac),#00a8cc);
-  color:#000; font-size:.78rem; font-weight:700;
-  border:none; transition:all .22s; letter-spacing:.01em;
-}
-.npri:hover { transform:translateY(-1px); box-shadow:var(--glow); filter:brightness(1.1); }
-
-.ubadge {
-  font-family:'JetBrains Mono',monospace; font-size:.7rem;
-  color:var(--ac); padding:3px 10px;
-  border:1px solid rgba(0,212,255,.2);
-  border-radius:20px; background:rgba(0,212,255,.07);
-  max-width:130px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-}
-.burger { display:none; background:transparent; border:1px solid var(--bd2); padding:5px 9px; border-radius:8px; color:var(--tx); }
-
-/* ═══ PAGE SYSTEM ═══ */
-.page { display:none; min-height:100vh; position:relative; z-index:2; padding-top:var(--nav); }
-.page.on { display:block; animation:fadeIn .3s ease; }
-.chatwrap { display:none; height:100vh; position:relative; z-index:2; padding-top:var(--nav); }
-.chatwrap.on { display:flex; }
-
-/* ═══ SHARED ═══ */
-.cont { max-width:1160px; margin:0 auto; padding:0 28px; }
-.sec  { padding:88px 0; position:relative; }
-
-.sl {
-  font-family:'JetBrains Mono',monospace;
-  font-size:.65rem; color:var(--ac);
-  letter-spacing:.15em; text-transform:uppercase;
-  margin-bottom:14px;
-  display:flex; align-items:center; gap:10px;
-}
-.sl::before { content:''; width:24px; height:1px; background:var(--ac); }
-
-.st {
-  font-family:'Syne', sans-serif;
-  font-weight:800; font-size:clamp(1.9rem,3.5vw,2.9rem);
-  letter-spacing:-.04em; line-height:1.08;
-  margin-bottom:48px; color:var(--tx);
-}
-
-.grad {
-  background: linear-gradient(120deg, var(--ac) 0%, var(--ac2) 50%, var(--ac3) 100%);
-  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
-  background-clip:text;
-}
-
-/* GLASS CARD */
-.glass {
-  background: rgba(14,18,25,.6);
-  border: 1px solid var(--bd2);
-  border-radius: var(--r);
-  backdrop-filter: blur(12px);
-}
-[data-theme="light"] .glass {
-  background: rgba(255,255,255,.7);
-}
-
-/* BUTTONS */
-.bpri {
-  display:inline-flex; align-items:center; gap:8px;
-  background:linear-gradient(135deg,var(--ac),#0099bb);
-  color:#000; border:none;
-  padding:11px 22px; border-radius:11px;
-  font-size:.86rem; font-weight:700;
-  transition:all .22s; cursor:pointer;
-  letter-spacing:.01em;
-}
-.bpri:hover { transform:translateY(-2px); box-shadow:var(--glow); filter:brightness(1.08); }
-
-.bgh {
-  display:inline-flex; align-items:center; gap:8px;
-  background:rgba(0,212,255,.07);
-  border:1px solid var(--bd2); color:var(--tx2);
-  padding:11px 22px; border-radius:11px;
-  font-size:.86rem; font-weight:500;
-  transition:all .22s; cursor:pointer;
-}
-.bgh:hover { border-color:var(--ac); color:var(--ac); background:rgba(0,212,255,.1); }
-.fw { width:100%; }
-
-/* ═══ HERO ═══ */
-.hero {
-  min-height:calc(100vh - var(--nav));
-  display:flex; align-items:center; justify-content:center;
-  padding:60px 28px 80px; text-align:center; position:relative;
-}
-
-/* Hex grid */
-.hero-hex {
-  position:absolute; inset:0; pointer-events:none; overflow:hidden;
-}
-.hero-hex svg { width:100%; height:100%; opacity:.08; }
-
-.hinner { position:relative; z-index:1; max-width:740px; }
-
-.htag {
-  display:inline-flex; align-items:center; gap:8px;
-  font-family:'JetBrains Mono',monospace; font-size:.7rem;
-  color:var(--ac); border:1px solid rgba(0,212,255,.2);
-  padding:6px 16px; border-radius:30px; margin-bottom:32px;
-  background:rgba(0,212,255,.06); letter-spacing:.06em;
-}
-.htag-dot { width:6px; height:6px; border-radius:50%; background:var(--ac); animation:pulse 2s infinite; }
-
-.hh1 {
-  font-family:'Syne',sans-serif;
-  font-weight:800; font-size:clamp(3rem,8vw,6rem);
-  letter-spacing:-.06em; line-height:.92; color:var(--tx);
-  margin-bottom:26px;
-}
-
-.hsub { margin:0 auto 40px; max-width:520px; color:var(--tx2); font-size:1rem; line-height:1.85; font-weight:300; }
-
-.hact { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
-
-.hstats { display:flex; align-items:center; justify-content:center; gap:36px; margin-top:64px; flex-wrap:wrap; }
-.hs { text-align:center; }
-.hsn { display:block; font-family:'Syne',sans-serif; font-weight:800; font-size:2rem; color:var(--tx); }
-.hsl { font-size:.68rem; color:var(--tx3); margin-top:2px; letter-spacing:.1em; text-transform:uppercase; font-family:'JetBrains Mono',monospace; }
-.hsdiv { width:1px; height:32px; background:var(--bd2); }
-
-/* ═══ FEATURE GRID ═══ */
-.fgrid {
-  display:grid; grid-template-columns:repeat(3,1fr);
-  gap:16px;
-}
-.fc {
-  background:var(--sf); border:1px solid var(--bd);
-  border-radius:18px; padding:30px 26px;
-  transition:all .35s; position:relative; overflow:hidden;
-  cursor:default;
-}
-.fc::after {
-  content:''; position:absolute; inset:0;
-  background: radial-gradient(circle at 50% 0%, rgba(0,212,255,.08), transparent 60%);
-  opacity:0; transition:opacity .35s;
-}
-.fc:hover { border-color:rgba(0,212,255,.25); transform:translateY(-4px); box-shadow:var(--glow); }
-.fc:hover::after { opacity:1; }
-
-.fic {
-  width:46px; height:46px; border-radius:13px;
-  display:flex; align-items:center; justify-content:center;
-  margin-bottom:18px; flex-shrink:0;
-}
-.fc h3 { font-size:.95rem; font-weight:600; margin-bottom:8px; color:var(--tx); font-family:'Syne',sans-serif; letter-spacing:-.02em; }
-.fc p { font-size:.81rem; line-height:1.75; }
-
-/* ═══ STEPS ═══ */
-.srow { display:flex; align-items:center; justify-content:center; gap:16px; flex-wrap:wrap; }
-.step {
-  background:var(--sf); border:1px solid var(--bd);
-  padding:28px 22px; border-radius:16px;
-  text-align:center; flex:1; min-width:155px; max-width:200px;
-  transition:all .3s; position:relative;
-}
-.step:hover { border-color:rgba(0,212,255,.3); transform:translateY(-4px); box-shadow:var(--glow); }
-.stepn { font-family:'JetBrains Mono',monospace; font-size:2.4rem; font-weight:500; color:var(--bd2); margin-bottom:12px; line-height:1; transition:color .3s; }
-.step:hover .stepn { color:var(--ac); }
-.step h3 { font-size:.88rem; font-weight:600; margin-bottom:6px; color:var(--tx); }
-.step p { font-size:.77rem; }
-.sarr { color:var(--tx3); }
-
-/* ═══ CHAT ═══ */
-.csb {
-  width:256px; min-width:256px; height:100%;
-  background:var(--bg2); border-right:1px solid var(--bd);
-  display:flex; flex-direction:column; overflow:hidden;
-}
-.sbh {
-  padding:14px 12px 10px;
-  border-bottom:1px solid var(--bd);
-  display:flex; align-items:center; justify-content:space-between;
-}
-.newbtn {
-  width:28px; height:28px; border-radius:7px;
-  background:transparent; color:var(--tx3);
-  border:1px solid var(--bd2);
-  display:flex; align-items:center; justify-content:center;
-  transition:all .2s;
-}
-.newbtn:hover { background:var(--sf2); color:var(--ac); border-color:rgba(0,212,255,.3); }
-
-.hlist { flex:1; overflow-y:auto; padding:4px 6px 12px; }
-.hlist::-webkit-scrollbar { width:3px; }
-.hlist::-webkit-scrollbar-thumb { background:var(--bd2); border-radius:2px; }
-
-.hempty { padding:28px 14px; text-align:center; }
-.hempty p { color:var(--tx3); font-size:.79rem; }
-.hempty small { color:var(--tx3); font-size:.69rem; opacity:.55; }
-
-.hi {
-  padding:7px 9px; border-radius:8px; cursor:pointer;
-  border:none; margin-bottom:1px; transition:background .12s;
-  display:flex; align-items:center; gap:8px; width:100%;
-  background:transparent; text-align:left;
-}
-.hi:hover { background:var(--sf); }
-.hi.on { background:rgba(0,212,255,.08); border:1px solid rgba(0,212,255,.12); }
-.hi-icon { width:20px; height:20px; border-radius:5px; background:var(--sf2); display:flex; align-items:center; justify-content:center; flex-shrink:0; border:1px solid var(--bd); }
-.hit { font-size:.8rem; color:var(--tx2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; }
-.hi:hover .hit, .hi.on .hit { color:var(--tx); }
-
-.cmain { flex:1; display:flex; flex-direction:column; overflow:hidden; }
-.ctop {
-  padding:10px 16px; border-bottom:1px solid var(--bd);
-  display:flex; align-items:center; gap:8px;
-  background:rgba(8,11,16,.9);
-  backdrop-filter:blur(12px);
-  flex-shrink:0;
-}
-.mobbtn { display:none; background:transparent; border:1px solid var(--bd2); padding:5px 9px; border-radius:8px; color:var(--tx); }
-
-/* MODE SELECTOR */
-.modes { display:flex; gap:3px; flex:1; overflow-x:auto; }
-.modes::-webkit-scrollbar { display:none; }
-.modesel {
-  display:flex; align-items:center; gap:6px;
-  padding:5px 11px; border-radius:8px; border:none;
-  background:transparent; color:var(--tx3);
-  font-size:.77rem; font-weight:500; white-space:nowrap;
-  transition:all .2s; cursor:pointer;
-}
-.modesel:hover { color:var(--tx2); background:var(--sf2); }
-.modesel.on { color:var(--ac); background:rgba(0,212,255,.1); }
-
-.mbadge {
-  display:flex; align-items:center; gap:6px;
-  padding:4px 10px; border-radius:7px;
-  border:1px solid var(--bd);
-  font-family:'JetBrains Mono',monospace; font-size:.67rem;
-  color:var(--tx3); white-space:nowrap;
-}
-.sdot { width:6px; height:6px; border-radius:50%; background:var(--ac3); animation:pulse 2.4s infinite; flex-shrink:0; }
-
-.clrbtn {
-  width:28px; height:28px; border-radius:7px;
-  background:transparent; border:1px solid var(--bd2);
-  color:var(--tx3); display:flex; align-items:center; justify-content:center; transition:all .2s;
-}
-.clrbtn:hover { color:var(--ac4); border-color:rgba(255,77,109,.25); background:rgba(255,77,109,.06); }
-
-/* MSG AREA */
-.msa { flex:1; overflow-y:auto; padding:24px 20px; display:flex; flex-direction:column; gap:12px; }
-.msa::-webkit-scrollbar { width:4px; }
-.msa::-webkit-scrollbar-thumb { background:var(--bd2); border-radius:2px; }
-
-/* WELCOME */
-.welcome { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:55vh; text-align:center; gap:6px; padding:24px; animation:fadeIn .5s ease; }
-.wico {
-  width:64px; height:64px; border-radius:20px;
-  background:linear-gradient(135deg,rgba(0,212,255,.12),rgba(124,58,237,.12));
-  border:1px solid rgba(0,212,255,.2);
-  display:flex; align-items:center; justify-content:center;
-  margin-bottom:16px; animation:float 4s ease-in-out infinite;
-}
-.welcome h2 { font-family:'Syne',sans-serif; font-size:1.3rem; font-weight:700; color:var(--tx); margin-bottom:8px; }
-.welcome p { font-size:.87rem; color:var(--tx2); line-height:1.7; max-width:360px; }
-.qps { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:20px; }
-.qp {
-  padding:7px 14px; border-radius:20px; font-size:.78rem;
-  border:1px solid var(--bd2); background:var(--sf2); color:var(--tx2);
-  transition:all .2s; display:flex; align-items:center; gap:6px; cursor:pointer;
-}
-.qp:hover { border-color:rgba(0,212,255,.3); color:var(--ac); background:rgba(0,212,255,.07); }
-
-/* MSG */
-.msg { display:flex; gap:10px; align-items:flex-start; animation:slideDown .3s cubic-bezier(.16,1,.3,1); }
-.msg.user { flex-direction:row-reverse; }
-
-.mav {
-  width:30px; height:30px; border-radius:9px; flex-shrink:0;
-  display:flex; align-items:center; justify-content:center;
-}
-.aiav {
-  background:linear-gradient(135deg,var(--ac),var(--ac2));
-  box-shadow:0 0 14px rgba(0,212,255,.3);
-}
-.uav { background:var(--sf3); border:1px solid var(--bd2); }
-
-.msg-wrap { max-width:72%; display:flex; flex-direction:column; gap:5px; }
-.msg.user .msg-wrap { align-items:flex-end; }
-
-.mb {
-  padding:11px 15px; border-radius:14px;
-  font-size:.88rem; line-height:1.75; word-break:break-word;
-}
-.aib {
-  background:var(--sf); border:1px solid var(--bd);
-  color:var(--tx); border-radius:4px 14px 14px 14px;
-}
-.ub {
-  background:linear-gradient(135deg,rgba(0,212,255,.15),rgba(124,58,237,.12));
-  border:1px solid rgba(0,212,255,.2);
-  color:var(--tx); border-radius:14px 4px 14px 14px;
-}
-
-.rate-row { display:flex; align-items:center; gap:4px; }
-.act-btn {
-  width:26px; height:26px; border-radius:7px;
-  background:transparent; border:1px solid transparent;
-  color:var(--tx3); transition:all .18s;
-  display:flex; align-items:center; justify-content:center; cursor:pointer;
-}
-.act-btn:hover { background:var(--sf2); border-color:var(--bd2); color:var(--tx); }
-.act-btn.liked { color:var(--ac3); background:rgba(0,255,136,.08); border-color:rgba(0,255,136,.2); }
-.act-btn.disliked { color:var(--ac4); background:rgba(255,77,109,.08); border-color:rgba(255,77,109,.2); }
-
-/* TYPING */
-.typing { display:flex; gap:5px; align-items:center; padding:14px 16px !important; }
-.typing span {
-  width:7px; height:7px; border-radius:50%;
-  background:var(--ac); display:block; opacity:.5;
-  animation:tdot 1.2s ease infinite;
-}
-.typing span:nth-child(2) { animation-delay:.2s; }
-.typing span:nth-child(3) { animation-delay:.4s; }
-
-/* INPUT */
-.ciarea {
-  padding:14px 16px 16px;
-  border-top:1px solid var(--bd);
-  background:rgba(8,11,16,.9);
-  backdrop-filter:blur(12px);
-  flex-shrink:0;
-}
-.iwrap {
-  display:flex; align-items:flex-end; gap:10px;
-  background:var(--sf); border:1px solid var(--bd2);
-  border-radius:14px; padding:10px 10px 10px 14px;
-  transition:border-color .2s;
-}
-.iwrap:focus-within { border-color:rgba(0,212,255,.4); box-shadow:0 0 0 3px rgba(0,212,255,.07); }
-
-.cta {
-  flex:1; background:transparent; border:none; outline:none;
-  color:var(--tx); font-family:inherit; font-size:.88rem;
-  line-height:1.6; resize:none; min-height:22px; max-height:140px;
-  overflow-y:auto;
-}
-.cta::placeholder { color:var(--tx3); }
-.cta::-webkit-scrollbar { width:3px; }
-
-.sndbtn {
-  width:36px; height:36px; border-radius:10px;
-  background:linear-gradient(135deg,var(--ac),#0099bb);
-  border:none; color:#000; flex-shrink:0;
-  display:flex; align-items:center; justify-content:center;
-  transition:all .2s;
-}
-.sndbtn:hover { transform:scale(1.08); box-shadow:var(--glow); }
-.sndbtn:disabled { opacity:.4; transform:none; box-shadow:none; }
-.ihint { font-size:.68rem; color:var(--tx3); margin-top:7px; text-align:center; font-family:'JetBrains Mono',monospace; }
-
-/* ═══ TOOLS ═══ */
-.tools-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:18px; }
-.tool-card {
-  background:var(--sf); border:1px solid var(--bd);
-  border-radius:18px; padding:28px;
-  transition:all .3s; position:relative; overflow:hidden;
-}
-.tool-card::before {
-  content:''; position:absolute; top:0; left:0; right:0; height:2px;
-  background:linear-gradient(90deg,var(--ac),var(--ac2),var(--ac3));
-  opacity:0; transition:opacity .3s;
-}
-.tool-card:hover::before { opacity:1; }
-.tool-card:hover { border-color:var(--bd2); box-shadow:var(--glow); }
-.tc-icon { width:44px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; margin-bottom:16px; }
-.tc-title { font-size:.97rem; font-weight:700; color:var(--tx); font-family:'Syne',sans-serif; margin-bottom:6px; }
-.tc-desc { font-size:.8rem; color:var(--tx2); margin-bottom:16px; line-height:1.65; }
-.tc-area {
-  width:100%; padding:10px 13px; background:var(--sf2); border:1px solid var(--bd2);
-  border-radius:11px; color:var(--tx); font-family:inherit; font-size:.84rem;
-  outline:none; transition:all .2s; resize:vertical; min-height:90px; margin-bottom:12px;
-}
-.tc-area:focus { border-color:rgba(0,212,255,.4); box-shadow:0 0 0 3px rgba(0,212,255,.07); }
-.tc-sel {
-  width:100%; padding:9px 13px; background:var(--sf2); border:1px solid var(--bd2);
-  border-radius:11px; color:var(--tx); font-family:inherit; font-size:.84rem;
-  outline:none; margin-bottom:12px; cursor:pointer;
-}
-.tc-result {
-  display:none; margin-top:14px; padding:14px; border-radius:12px;
-  background:rgba(0,212,255,.05); border:1px solid rgba(0,212,255,.15);
-  color:var(--tx); font-size:.84rem; line-height:1.75; white-space:pre-wrap;
-}
-.tc-result.show { display:block; animation:slideIn .3s ease; }
-.tloading { display:flex; align-items:center; gap:8px; color:var(--tx3); font-size:.82rem; }
-.tloading::before { content:''; width:14px; height:14px; border:2px solid var(--bd2); border-top-color:var(--ac); border-radius:50%; animation:spin .7s linear infinite; }
-
-/* ═══ PLANNER ═══ */
-.planner-grid { display:grid; grid-template-columns:1fr 2fr; gap:20px; }
-.planner-form { background:var(--sf); border:1px solid var(--bd); border-radius:18px; padding:26px; }
-.pf-label { font-size:.76rem; color:var(--tx3); font-family:'JetBrains Mono',monospace; text-transform:uppercase; letter-spacing:.07em; margin-bottom:7px; display:block; }
-.pf-input {
-  width:100%; padding:10px 13px; background:var(--sf2); border:1px solid var(--bd2);
-  border-radius:11px; color:var(--tx); font-family:inherit; font-size:.85rem;
-  outline:none; transition:all .2s; margin-bottom:14px;
-}
-.pf-input:focus { border-color:rgba(0,212,255,.4); box-shadow:0 0 0 3px rgba(0,212,255,.07); }
-.planner-output { background:var(--sf); border:1px solid var(--bd); border-radius:18px; padding:26px; }
-.plan-empty { text-align:center; padding:50px 20px; }
-.plan-empty-icon { font-size:2.5rem; margin-bottom:14px; opacity:.4; }
-.plan-item { display:flex; align-items:flex-start; gap:14px; padding:14px 0; border-bottom:1px solid var(--bd); animation:slideIn .3s ease both; }
-.plan-item:last-child { border-bottom:none; }
-.plan-day { min-width:48px; height:48px; border-radius:12px; background:rgba(0,212,255,.08); border:1px solid rgba(0,212,255,.15); display:flex; flex-direction:column; align-items:center; justify-content:center; flex-shrink:0; }
-.plan-day-n { font-family:'Syne',sans-serif; font-weight:800; font-size:1.1rem; color:var(--ac); line-height:1; }
-.plan-day-l { font-family:'JetBrains Mono',monospace; font-size:.58rem; color:var(--ac); text-transform:uppercase; letter-spacing:.06em; }
-.plan-content h4 { font-size:.88rem; font-weight:600; color:var(--tx); margin-bottom:4px; }
-.plan-content p { font-size:.8rem; color:var(--tx2); line-height:1.65; }
-.plan-tag { display:inline-block; padding:2px 9px; border-radius:6px; font-size:.7rem; font-weight:600; font-family:'JetBrains Mono',monospace; margin-top:6px; }
-.tag-math { background:rgba(0,212,255,.1); color:var(--ac); }
-.tag-sci  { background:rgba(0,255,136,.1); color:var(--ac3); }
-.tag-hist { background:rgba(124,58,237,.12); color:#a78bfa; }
-.tag-gen  { background:rgba(255,77,109,.08); color:var(--ac4); }
-
-/* ═══ STATS / XP ═══ */
-.stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:20px; }
-.stat-card {
-  background:var(--sf); border:1px solid var(--bd);
-  border-radius:16px; padding:24px 20px; text-align:center;
-  transition:all .3s;
-}
-.stat-card:hover { border-color:var(--bd2); transform:translateY(-2px); box-shadow:var(--glow); }
-.stat-n { display:block; font-family:'Syne',sans-serif; font-size:2.2rem; font-weight:800; color:var(--tx); line-height:1.1; margin-bottom:8px; background:linear-gradient(135deg,var(--ac),var(--ac2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
-.stat-l { font-size:.74rem; color:var(--tx3); text-transform:uppercase; letter-spacing:.07em; font-family:'JetBrains Mono',monospace; }
-
-.xp-card {
-  background:linear-gradient(135deg,rgba(0,212,255,.06),rgba(124,58,237,.06));
-  border:1px solid rgba(0,212,255,.15);
-  border-radius:18px; padding:28px; margin-top:16px; position:relative; overflow:hidden;
-}
-.xp-card::before { content:''; position:absolute; top:-50px; right:-50px; width:200px; height:200px; border-radius:50%; background:radial-gradient(circle,rgba(0,212,255,.08),transparent 70%); }
-.xp-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
-.xp-level { font-family:'Syne',sans-serif; font-size:1.9rem; font-weight:800; color:var(--tx); }
-.xp-label { font-family:'JetBrains Mono',monospace; font-size:.68rem; color:var(--tx3); text-transform:uppercase; letter-spacing:.1em; margin-top:3px; }
-.xp-badge { display:flex; align-items:center; gap:8px; }
-.badge { padding:4px 12px; border-radius:20px; font-size:.74rem; font-weight:600; font-family:'JetBrains Mono',monospace; }
-.badge-gold   { background:rgba(255,179,71,.12); color:#ffb347; border:1px solid rgba(255,179,71,.25); }
-.badge-silver { background:rgba(148,163,184,.12); color:#94a3b8; border:1px solid rgba(148,163,184,.25); }
-.badge-bronze { background:rgba(180,120,80,.12);  color:#b47850; border:1px solid rgba(180,120,80,.25); }
-.xp-bar-wrap { margin-bottom:12px; }
-.xp-bar-info { display:flex; justify-content:space-between; font-size:.74rem; color:var(--tx3); font-family:'JetBrains Mono',monospace; margin-bottom:8px; }
-.xp-bar-bg { height:7px; background:rgba(255,255,255,.06); border-radius:6px; overflow:hidden; }
-.xp-bar-fill { height:100%; background:linear-gradient(90deg,var(--ac),var(--ac2)); border-radius:6px; transition:width .9s cubic-bezier(.16,1,.3,1); }
-
-.achievements-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:20px; }
-.achievement {
-  background:var(--sf2); border:1px solid var(--bd); border-radius:14px;
-  padding:16px 12px; text-align:center; transition:all .3s; position:relative;
-}
-.achievement.unlocked { border-color:rgba(255,179,71,.25); background:rgba(255,179,71,.05); }
-.achievement.unlocked:hover { transform:translateY(-2px); box-shadow:0 4px 20px rgba(255,179,71,.12); }
-.ach-icon { font-size:1.8rem; margin-bottom:8px; display:block; }
-.achievement:not(.unlocked) .ach-icon { filter:grayscale(1); opacity:.25; }
-.ach-name { font-size:.73rem; font-weight:700; color:var(--tx); letter-spacing:-.01em; display:block; }
-.achievement:not(.unlocked) .ach-name { color:var(--tx3); }
-.ach-desc { font-size:.67rem; color:var(--tx3); margin-top:3px; display:block; }
-.lock-icon { position:absolute; top:8px; right:8px; }
-
-.chart-wrap { background:var(--sf); border:1px solid var(--bd); border-radius:18px; padding:26px; margin-top:16px; }
-.chart-title { font-family:'Syne',sans-serif; font-size:.92rem; font-weight:700; color:var(--tx); margin-bottom:20px; }
-.bar-row { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
-.bar-label { font-size:.78rem; color:var(--tx2); min-width:90px; }
-.bar-bg { flex:1; height:6px; background:rgba(255,255,255,.05); border-radius:4px; overflow:hidden; }
-.bar-fill { height:100%; background:linear-gradient(90deg,var(--ac),var(--ac2)); border-radius:4px; transition:width .8s cubic-bezier(.16,1,.3,1); }
-.bar-val { font-family:'JetBrains Mono',monospace; font-size:.72rem; color:var(--tx3); min-width:24px; text-align:right; }
-.rating-wrap { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
-.rating-card { background:var(--sf); border:1px solid var(--bd); border-radius:16px; padding:24px 20px; text-align:center; }
-.rlabel { font-size:.74rem; color:var(--tx3); text-transform:uppercase; letter-spacing:.07em; font-family:'JetBrains Mono',monospace; margin-top:8px; }
-
-/* ═══ FLASHCARDS ═══ */
-.flashcard-area { max-width:580px; margin:0 auto; }
-.fc-subject-select { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:28px; }
-.fc-subj { padding:7px 16px; border-radius:20px; font-size:.79rem; font-weight:500; border:1px solid var(--bd2); background:transparent; color:var(--tx2); transition:all .2s; cursor:pointer; }
-.fc-subj:hover { border-color:rgba(0,212,255,.3); color:var(--ac); }
-.fc-subj.on { background:rgba(0,212,255,.1); color:var(--ac); border-color:rgba(0,212,255,.25); }
-
-.flashcard-scene { perspective:1000px; height:240px; cursor:pointer; margin-bottom:24px; }
-.flashcard-inner { position:relative; width:100%; height:100%; transition:transform .65s cubic-bezier(.16,1,.3,1); transform-style:preserve-3d; }
-.flashcard-inner.flipped { transform:rotateY(180deg); }
-.fc-face { position:absolute; inset:0; border-radius:20px; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:32px; text-align:center; backface-visibility:hidden; -webkit-backface-visibility:hidden; }
-.fc-front { background:var(--sf); border:1px solid var(--bd2); }
-.fc-back { background:linear-gradient(135deg,rgba(0,212,255,.08),rgba(124,58,237,.08)); border:1px solid rgba(0,212,255,.2); transform:rotateY(180deg); }
-.fc-q { font-family:'Syne',sans-serif; font-size:1.3rem; font-weight:700; color:var(--tx); line-height:1.4; }
-.fc-a { font-size:.95rem; color:var(--tx); line-height:1.7; }
-.fc-hint { font-size:.7rem; color:var(--tx3); margin-top:14px; font-family:'JetBrains Mono',monospace; }
-.fc-controls { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.fc-nav { display:flex; gap:8px; }
-.fc-btn { padding:9px 18px; border-radius:11px; font-size:.83rem; font-weight:500; border:1px solid var(--bd2); background:var(--sf2); color:var(--tx2); transition:all .2s; display:flex; align-items:center; gap:6px; cursor:pointer; }
-.fc-btn:hover { border-color:rgba(0,212,255,.3); color:var(--ac); }
-.fc-progress { font-family:'JetBrains Mono',monospace; font-size:.74rem; color:var(--tx3); }
-.fc-gen-area { margin-top:36px; padding-top:28px; border-top:1px solid var(--bd); }
-
-/* ═══ QUIZ ═══ */
-.quiz-setup { max-width:540px; margin:0 auto; }
-.quiz-active { max-width:640px; margin:0 auto; }
-.quiz-q-card { background:var(--sf); border:1px solid var(--bd); border-radius:20px; padding:36px; margin-bottom:20px; }
-.quiz-num { font-family:'JetBrains Mono',monospace; font-size:.7rem; color:var(--tx3); letter-spacing:.1em; text-transform:uppercase; margin-bottom:16px; }
-.quiz-q { font-family:'Syne',sans-serif; font-size:1.3rem; font-weight:700; color:var(--tx); line-height:1.45; }
-.quiz-opts { display:flex; flex-direction:column; gap:10px; }
-.quiz-opt {
-  padding:14px 18px; border-radius:13px;
-  border:1px solid var(--bd2); background:var(--sf2);
-  color:var(--tx); font-size:.88rem; text-align:left;
-  transition:all .2s; cursor:pointer; position:relative;
-}
-.quiz-opt:hover:not(.disabled) { border-color:rgba(0,212,255,.3); background:rgba(0,212,255,.06); transform:translateX(5px); }
-.quiz-opt.correct { border-color:var(--ac3); background:rgba(0,255,136,.08); color:var(--ac3); }
-.quiz-opt.wrong { border-color:var(--ac4); background:rgba(255,77,109,.08); color:var(--ac4); }
-.quiz-opt.disabled { cursor:default; }
-.quiz-progress { height:3px; background:var(--sf2); border-radius:2px; margin-bottom:24px; overflow:hidden; }
-.quiz-progress-fill { height:100%; background:linear-gradient(90deg,var(--ac),var(--ac2)); border-radius:2px; transition:width .4s ease; }
-.quiz-result { text-align:center; padding:40px 20px; animation:scaleIn .5s ease both; }
-.quiz-score { font-family:'Syne',sans-serif; font-size:4rem; font-weight:800; background:linear-gradient(135deg,var(--ac),var(--ac2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
-
-/* ═══ AUTH ═══ */
-.awrap { min-height:calc(100vh - var(--nav)); display:flex; align-items:center; justify-content:center; padding:40px 20px; position:relative; }
-.acard { background:var(--sf); border:1px solid var(--bd); border-radius:22px; padding:40px 36px; width:100%; max-width:400px; position:relative; z-index:1; box-shadow:0 20px 60px rgba(0,0,0,.4); }
-.acard::before { content:''; position:absolute; inset:-1px; border-radius:23px; background:linear-gradient(135deg,rgba(0,212,255,.2),rgba(124,58,237,.2)); z-index:-1; }
-.atitle { font-family:'Syne',sans-serif; font-size:1.5rem; font-weight:800; text-align:center; color:var(--tx); margin-bottom:6px; }
-.asub { text-align:center; font-size:.84rem; color:var(--tx2); margin-bottom:24px; }
-.atabs { display:flex; background:var(--sf2); border-radius:12px; padding:3px; margin-bottom:22px; gap:2px; border:1px solid var(--bd); }
-.atab { flex:1; padding:8px; border-radius:9px; border:none; background:transparent; color:var(--tx2); font-size:.82rem; font-weight:500; transition:all .2s; cursor:pointer; }
-.atab.on { background:rgba(0,212,255,.1); color:var(--ac); box-shadow:inset 0 0 0 1px rgba(0,212,255,.2); }
-.fg { margin-bottom:14px; }
-.fl { display:block; font-size:.75rem; color:var(--tx3); font-family:'JetBrains Mono',monospace; text-transform:uppercase; letter-spacing:.07em; margin-bottom:7px; }
-.fi { width:100%; padding:11px 14px; background:var(--sf2); border:1px solid var(--bd2); border-radius:11px; color:var(--tx); font-family:inherit; font-size:.87rem; outline:none; transition:all .2s; }
-.fi:focus { border-color:rgba(0,212,255,.4); box-shadow:0 0 0 3px rgba(0,212,255,.07); }
-.fi::placeholder { color:var(--tx3); }
-.ferr { color:var(--ac4); font-size:.79rem; margin-bottom:10px; min-height:18px; }
-.adiv { display:flex; align-items:center; gap:12px; margin:18px 0; }
-.adiv::before,.adiv::after { content:''; flex:1; height:1px; background:var(--bd2); }
-.adiv span { font-size:.76rem; color:var(--tx3); white-space:nowrap; }
-.bgoogle { width:100%; padding:11px; background:var(--sf2); border:1px solid var(--bd2); color:var(--tx); border-radius:11px; font-size:.83rem; font-weight:500; display:flex; align-items:center; justify-content:center; gap:10px; transition:all .2s; cursor:pointer; }
-.bgoogle:hover { border-color:var(--bd2); background:var(--sf3); transform:translateY(-1px); }
-.asw { text-align:center; font-size:.79rem; color:var(--tx2); margin-top:18px; }
-.asw a { color:var(--ac); font-weight:600; cursor:pointer; }
-
-/* ═══ ABOUT ═══ */
-.sci-grid { display:grid; grid-template-columns:1fr 1fr; gap:48px; align-items:start; }
-.sci-text p { font-size:.89rem; line-height:1.85; margin-bottom:14px; }
-.steps-sci { display:flex; flex-direction:column; }
-.step-sci { display:flex; align-items:flex-start; gap:18px; padding:20px 0; border-bottom:1px solid var(--bd); }
-.step-sci:last-child { border-bottom:none; }
-.step-sci-n { font-family:'JetBrains Mono',monospace; font-size:.76rem; color:var(--ac); font-weight:500; min-width:28px; padding-top:2px; }
-.step-sci strong { font-size:.88rem; color:var(--tx); display:block; margin-bottom:4px; }
-.step-sci p { font-size:.81rem; color:var(--tx2); line-height:1.7; }
-.tcard { background:var(--sf2); border:1px solid var(--bd); border-radius:18px; padding:26px; position:relative; overflow:hidden; }
-.tcard::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,var(--ac),var(--ac2)); }
-.trow { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--bd); }
-.trow:last-child { border-bottom:none; }
-.tn { font-size:.81rem; color:var(--tx3); font-family:'JetBrains Mono',monospace; }
-.tv { font-size:.83rem; color:var(--tx); font-weight:500; }
-.tv.ac { color:var(--ac); }
-.af-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-.afi { display:flex; gap:12px; padding:16px; background:var(--sf); border:1px solid var(--bd); border-radius:14px; transition:all .2s; align-items:flex-start; }
-.afi:hover { border-color:var(--bd2); transform:translateY(-1px); }
-.afic { width:32px; height:32px; border-radius:9px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-.afi strong { font-size:.83rem; display:block; margin-bottom:3px; color:var(--tx); }
-.afi p { font-size:.76rem; margin:0; }
-.about-grid { display:grid; grid-template-columns:1fr 1fr; gap:48px; align-items:start; }
-.atext p { font-size:.89rem; line-height:1.85; margin-bottom:14px; }
-
-/* ═══ FOOTER ═══ */
-.footer { border-top:1px solid var(--bd); padding:36px 28px; position:relative; z-index:2; }
-.fin { max-width:1160px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; }
-.flinks { display:flex; gap:20px; }
-.flinks button { font-size:.77rem; color:var(--tx3); background:transparent; border:none; transition:color .2s; cursor:pointer; }
-.flinks button:hover { color:var(--ac); }
-.fcopy { font-family:'JetBrains Mono',monospace; font-size:.67rem; color:var(--tx3); }
-
-/* ═══ RESPONSIVE ═══ */
-@media(max-width:960px) {
-  .fgrid { grid-template-columns:1fr 1fr; }
-  .about-grid,.sci-grid { grid-template-columns:1fr; }
-  .af-grid { grid-template-columns:1fr; }
-  .tools-grid { grid-template-columns:1fr; }
-  .stats-grid { grid-template-columns:repeat(2,1fr); }
-  .rating-wrap { grid-template-columns:1fr; }
-  .planner-grid { grid-template-columns:1fr; }
-  .achievements-grid { grid-template-columns:repeat(2,1fr); }
-}
-@media(max-width:680px) {
-  .nav { padding:0 14px; }
-  .nlinks { display:none; }
-  .burger { display:flex; align-items:center; }
-  .fgrid { grid-template-columns:1fr; }
-  .srow { flex-direction:column; align-items:stretch; }
-  .sarr { text-align:center; transform:rotate(90deg); }
-  .stats-grid { grid-template-columns:1fr 1fr; }
-  .csb { position:fixed; left:-264px; top:var(--nav); bottom:0; z-index:250; width:256px; transition:left .3s cubic-bezier(.16,1,.3,1); }
-  .csb.open { left:0; box-shadow:6px 0 40px rgba(0,0,0,.6); }
-  .mobbtn { display:flex; }
-  .acard { padding:28px 20px; }
-  .fin { flex-direction:column; align-items:center; text-align:center; }
-  .achievements-grid { grid-template-columns:repeat(2,1fr); }
-}
-</style>
+<link rel="stylesheet" href="/src/styles/index.css">
 </head>
 <body>
 
@@ -763,7 +14,7 @@ body::after {
 
 <!-- NAV -->
 <nav class="nav hidden">
-  <div class="logo" onclick="currentUser ? go('chat') : showAuth()">
+  <div class="logo" data-action="logo">
     <div class="logo-icon">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
         <path d="M12 2L20 7V14Q20 20 12 23Q4 20 4 14V7Z" stroke="white" stroke-width="1.8" stroke-linejoin="round" fill="none"/>
@@ -774,21 +25,21 @@ body::after {
     <span>Smart<span style="color:var(--ac)">Helper</span></span>
   </div>
   <div class="nlinks" id="nlinks">
-    <button class="nb" data-p="chat"      onclick="go('chat')">Чат</button>
-    <button class="nb" data-p="tools"     onclick="go('tools')">Құралдар</button>
-    <button class="nb" data-p="planner"   onclick="go('planner')">Жоспар</button>
-    <button class="nb" data-p="flashcard" onclick="go('flashcard')">Карточкалар</button>
-    <button class="nb" data-p="quiz"      onclick="go('quiz')">Тест</button>
-    <button class="nb" data-p="stats"     onclick="go('stats')">Прогресс</button>
-    <button class="nb" data-p="about"     onclick="go('about')">Біз туралы</button>
+    <button class="nb" data-p="chat"      data-go="chat">Чат</button>
+    <button class="nb" data-p="tools"     data-go="tools">Құралдар</button>
+    <button class="nb" data-p="planner"   data-go="planner">Жоспар</button>
+    <button class="nb" data-p="flashcard" data-go="flashcard">Карточкалар</button>
+    <button class="nb" data-p="quiz"      data-go="quiz">Тест</button>
+    <button class="nb" data-p="stats"     data-go="stats">Прогресс</button>
+    <button class="nb" data-p="about"     data-go="about">Біз туралы</button>
   </div>
   <div class="nact">
     <button class="tbtn" id="tbtn">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
     </button>
     <div id="anav" style="display:flex;gap:7px">
-      <button class="nghost" onclick="go('auth','login')">Кіру</button>
-      <button class="npri"   onclick="go('auth','register')">Тіркелу</button>
+      <button class="nghost" data-go="auth" data-auth-tab="login">Кіру</button>
+      <button class="npri"   data-go="auth" data-auth-tab="register">Тіркелу</button>
     </div>
     <div id="unav" style="display:none;align-items:center;gap:8px">
       <span class="ubadge" id="ubadge"></span>
@@ -825,11 +76,11 @@ body::after {
       <h1 class="hh1 au d1">Ақылды<br><span class="grad">Көмекші</span></h1>
       <p class="hsub au d2">Жасанды интеллект негізінде оқушыларға арналған интеллектуалды оқу серігі. Чат, тест, жоспар — бәрі бір жерде.</p>
       <div class="hact au d3">
-        <button class="bpri" onclick="go('chat')">
+        <button class="bpri" data-go="chat">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           Чатты ашу
         </button>
-        <button class="bgh" onclick="go('tools')">AI Құралдар</button>
+        <button class="bgh" data-go="tools">AI Құралдар</button>
       </div>
       <div class="hstats au d4">
         <div class="hs"><span class="hsn">8</span><span class="hsl">Бет</span></div>
@@ -897,8 +148,8 @@ body::after {
       <h2 class="st" style="margin-bottom:12px">Бүгін бастаңыз</h2>
       <p style="color:var(--tx2);margin-bottom:32px;max-width:400px;margin-inline:auto">Тегін. Тіркелусіз де жұмыс істейді.</p>
       <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
-        <button class="bpri" onclick="go('auth','register')">Тіркелу — тегін</button>
-        <button class="bgh"  onclick="go('chat')">Алдымен сынап көру</button>
+        <button class="bpri" data-go="auth" data-auth-tab="register">Тіркелу — тегін</button>
+        <button class="bgh"  data-go="chat">Алдымен сынап көру</button>
       </div>
     </div>
   </div>
@@ -911,10 +162,10 @@ body::after {
       Smart<span style="color:var(--ac)">Helper</span>
     </div>
     <div class="flinks">
-      <button onclick="go('about')">Біз туралы</button>
-      <button onclick="go('chat')">Чат</button>
-      <button onclick="go('tools')">Құралдар</button>
-      <button onclick="go('stats')">Прогресс</button>
+      <button data-go="about">Біз туралы</button>
+      <button data-go="chat">Чат</button>
+      <button data-go="tools">Құралдар</button>
+      <button data-go="stats">Прогресс</button>
     </div>
     <p class="fcopy">© 2025 Smart Helper · Ғылыми жоба</p>
   </div></footer>
@@ -947,10 +198,10 @@ body::after {
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <div class="modes" id="modes">
-        <button class="modesel on" data-mode="general"  onclick="setMode(this)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>Жалпы</button>
-        <button class="modesel"    data-mode="math"     onclick="setMode(this)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>Математика</button>
-        <button class="modesel"    data-mode="history"  onclick="setMode(this)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Тарих</button>
-        <button class="modesel"    data-mode="science"  onclick="setMode(this)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v11m0 0H5a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2h-4m-6 0h6"/></svg>Ғылым</button>
+        <button class="modesel on" data-mode="general"  data-action="set-mode"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>Жалпы</button>
+        <button class="modesel"    data-mode="math"     data-action="set-mode"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>Математика</button>
+        <button class="modesel"    data-mode="history"  data-action="set-mode"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Тарих</button>
+        <button class="modesel"    data-mode="science"  data-action="set-mode"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v11m0 0H5a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2h-4m-6 0h6"/></svg>Ғылым</button>
       </div>
       <div class="mbadge"><span class="sdot"></span>claude-sonnet</div>
       <button class="clrbtn" id="clrbtn" title="Тазалау">
@@ -969,10 +220,10 @@ body::after {
         <h2>Сәлем! Мен Smart Helper</h2>
         <p>Режим таңдап, сұрағыңызды жазыңыз.<br>Оқу, ғылым, математика — бәрі бойынша.</p>
         <div class="qps">
-          <button class="qp" onclick="qpu(this)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>sin(30°) = неше?</button>
-          <button class="qp" onclick="qpu(this)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Эссе жазуға көмектес</button>
-          <button class="qp" onclick="qpu(this)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Қазақстан тарихы</button>
-          <button class="qp" onclick="qpu(this)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>Атом құрылысы</button>
+          <button class="qp" data-action="quick-prompt"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>sin(30°) = неше?</button>
+          <button class="qp" data-action="quick-prompt"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Эссе жазуға көмектес</button>
+          <button class="qp" data-action="quick-prompt"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Қазақстан тарихы</button>
+          <button class="qp" data-action="quick-prompt"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>Атом құрылысы</button>
         </div>
       </div>
     </div>
@@ -1000,7 +251,7 @@ body::after {
           <div class="tc-title">Мәтін қысқарту</div>
           <div class="tc-desc">Ұзын мәтінді қысқа және нақты мазмұнға айналдырады</div>
           <textarea class="tc-area" id="sumIn" placeholder="Қысқартылатын мәтінді енгізіңіз..."></textarea>
-          <button class="bpri" style="font-size:.82rem;padding:9px 18px" onclick="runTool('sum',this)">Қысқарту</button>
+          <button class="bpri" style="font-size:.82rem;padding:9px 18px" data-action="run-tool" data-tool="sum">Қысқарту</button>
           <div class="tc-result" id="sumOut"></div>
         </div>
         <div class="tool-card">
@@ -1013,7 +264,7 @@ body::after {
             <option value="ағылшын тіліне">Ағылшын тіліне</option>
           </select>
           <textarea class="tc-area" id="transIn" placeholder="Аударылатын мәтінді енгізіңіз..."></textarea>
-          <button class="bpri" style="font-size:.82rem;padding:9px 18px" onclick="runTool('trans',this)">Аудару</button>
+          <button class="bpri" style="font-size:.82rem;padding:9px 18px" data-action="run-tool" data-tool="trans">Аудару</button>
           <div class="tc-result" id="transOut"></div>
         </div>
         <div class="tool-card">
@@ -1021,7 +272,7 @@ body::after {
           <div class="tc-title">Қателерді түзету</div>
           <div class="tc-desc">Грамматикалық және стильдік қателерді анықтап, түзетеді</div>
           <textarea class="tc-area" id="fixIn" placeholder="Тексерілетін мәтінді енгізіңіз..."></textarea>
-          <button class="bpri" style="font-size:.82rem;padding:9px 18px" onclick="runTool('fix',this)">Түзету</button>
+          <button class="bpri" style="font-size:.82rem;padding:9px 18px" data-action="run-tool" data-tool="fix">Түзету</button>
           <div class="tc-result" id="fixOut"></div>
         </div>
         <div class="tool-card">
@@ -1029,7 +280,7 @@ body::after {
           <div class="tc-title">Идея генерациясы</div>
           <div class="tc-desc">Тақырып бойынша шығармашыл идеялар ұсынады</div>
           <textarea class="tc-area" id="ideaIn" placeholder="Тақырып немесе мақсат жазыңыз..." style="min-height:70px"></textarea>
-          <button class="bpri" style="font-size:.82rem;padding:9px 18px" onclick="runTool('idea',this)">Идея ұсын</button>
+          <button class="bpri" style="font-size:.82rem;padding:9px 18px" data-action="run-tool" data-tool="idea">Идея ұсын</button>
           <div class="tc-result" id="ideaOut"></div>
         </div>
       </div>
@@ -1054,7 +305,7 @@ body::after {
           <input class="pf-input" id="planDays" type="number" min="1" max="30" value="7">
           <label class="pf-label">Күніне уақыт (сағат)</label>
           <input class="pf-input" id="planHours" type="number" min="1" max="8" value="2">
-          <button class="bpri fw" id="planBtn" onclick="runPlanner()" style="margin-top:4px">
+          <button class="bpri fw" id="planBtn" data-action="run-planner" style="margin-top:4px">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
             Жоспар жасау
           </button>
@@ -1082,12 +333,12 @@ body::after {
       <h2 class="st">Flashcard жүйесі</h2>
       <div class="flashcard-area">
         <div class="fc-subject-select">
-          <button class="fc-subj on" data-subj="math"    onclick="setFCSubj(this)">Математика</button>
-          <button class="fc-subj"    data-subj="history" onclick="setFCSubj(this)">Тарих</button>
-          <button class="fc-subj"    data-subj="science" onclick="setFCSubj(this)">Ғылым</button>
-          <button class="fc-subj"    data-subj="kazakh"  onclick="setFCSubj(this)">Қазақ тілі</button>
+          <button class="fc-subj on" data-subj="math"    data-action="set-flashcard-subject">Математика</button>
+          <button class="fc-subj"    data-subj="history" data-action="set-flashcard-subject">Тарих</button>
+          <button class="fc-subj"    data-subj="science" data-action="set-flashcard-subject">Ғылым</button>
+          <button class="fc-subj"    data-subj="kazakh"  data-action="set-flashcard-subject">Қазақ тілі</button>
         </div>
-        <div class="flashcard-scene" onclick="flipCard()">
+        <div class="flashcard-scene" data-action="flip-card">
           <div class="flashcard-inner" id="cardInner">
             <div class="fc-face fc-front">
               <div class="fc-q" id="fcQuestion">Жүктелуде...</div>
@@ -1101,16 +352,16 @@ body::after {
         </div>
         <div class="fc-controls">
           <div class="fc-nav">
-            <button class="fc-btn" onclick="fcResult('bad')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ac4)" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Білмедім</button>
-            <button class="fc-btn" onclick="fcResult('good')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ac3)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Білдім</button>
+            <button class="fc-btn" data-action="flashcard-result" data-result="bad"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ac4)" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Білмедім</button>
+            <button class="fc-btn" data-action="flashcard-result" data-result="good"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ac3)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>Білдім</button>
           </div>
           <div class="fc-progress" id="fcProgress">0 / 0</div>
-          <button class="fc-btn" onclick="nextCard()">Келесі <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></button>
+          <button class="fc-btn" data-action="next-card">Келесі <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></button>
         </div>
         <div class="fc-gen-area">
           <div class="sl" style="margin-bottom:16px">AI карточкалар жасау</div>
           <textarea class="tc-area" id="fcGenTopic" placeholder="Тақырыпты жазыңыз..." style="min-height:70px"></textarea>
-          <button class="bpri" onclick="genFlashcards()" id="fcGenBtn">
+          <button class="bpri" data-action="generate-flashcards" id="fcGenBtn">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
             AI карточкалар жасау
           </button>
@@ -1139,7 +390,7 @@ body::after {
             <option value="10" selected>10 сұрақ</option>
             <option value="15">15 сұрақ</option>
           </select>
-          <button class="bpri fw" id="quizGenBtn" onclick="genQuiz()">
+          <button class="bpri fw" id="quizGenBtn" data-action="generate-quiz">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
             Тест жасау
           </button>
@@ -1157,7 +408,7 @@ body::after {
         <div class="quiz-score" id="quizScoreN">0/0</div>
         <h3 style="font-family:'Syne',sans-serif;font-size:1.5rem;color:var(--tx);margin:12px 0 8px">Тест аяқталды!</h3>
         <p id="quizScoreMsg" style="color:var(--tx2);margin-bottom:28px"></p>
-        <button class="bpri" onclick="resetQuiz()">Қайтадан тест тапсыру</button>
+        <button class="bpri" data-action="reset-quiz">Қайтадан тест тапсыру</button>
       </div>
     </div>
   </section>
@@ -1226,28 +477,28 @@ body::after {
 
     <div style="width:100%;max-width:380px;position:relative;z-index:1;animation:fadeUp .5s cubic-bezier(.16,1,.3,1) .08s both">
       <div id="authTabs" style="display:flex;background:var(--sf2);border-radius:13px;padding:4px;margin-bottom:24px;gap:3px;border:1px solid var(--bd)">
-        <button id="tabL" onclick="atab('login')" style="flex:1;padding:9px;border-radius:10px;border:none;background:rgba(0,212,255,.1);color:var(--ac);font-size:.83rem;font-weight:700;font-family:inherit;cursor:pointer;transition:all .2s">Кіру</button>
-        <button id="tabR" onclick="atab('register')" style="flex:1;padding:9px;border-radius:10px;border:none;background:transparent;color:var(--tx2);font-size:.83rem;font-weight:500;font-family:inherit;cursor:pointer;transition:all .2s">Тіркелу</button>
+        <button id="tabL" data-action="auth-tab" data-tab="login" style="flex:1;padding:9px;border-radius:10px;border:none;background:rgba(0,212,255,.1);color:var(--ac);font-size:.83rem;font-weight:700;font-family:inherit;cursor:pointer;transition:all .2s">Кіру</button>
+        <button id="tabR" data-action="auth-tab" data-tab="register" style="flex:1;padding:9px;border-radius:10px;border:none;background:transparent;color:var(--tx2);font-size:.83rem;font-weight:500;font-family:inherit;cursor:pointer;transition:all .2s">Тіркелу</button>
       </div>
       <div id="fL">
         <div class="fg"><label class="fl">Email</label><input class="fi" id="lE" type="email" placeholder="email@example.com" autocomplete="email"></div>
         <div class="fg"><label class="fl">Құпия сөз</label><input class="fi" id="lP" type="password" placeholder="••••••••" autocomplete="current-password"></div>
         <div class="ferr" id="lErr"></div>
-        <button class="bpri fw" id="lBtn" onclick="doLogin()" style="margin-bottom:14px;height:44px;font-size:.9rem">Кіру</button>
+        <button class="bpri fw" id="lBtn" data-action="login" style="margin-bottom:14px;height:44px;font-size:.9rem">Кіру</button>
       </div>
       <div id="fR" style="display:none">
         <div class="fg"><label class="fl">Атыңыз</label><input class="fi" id="rN" type="text" placeholder="Аты-жөніңіз" autocomplete="name"></div>
         <div class="fg"><label class="fl">Email</label><input class="fi" id="rE" type="email" placeholder="email@example.com" autocomplete="email"></div>
         <div class="fg"><label class="fl">Құпия сөз</label><input class="fi" id="rP" type="password" placeholder="Кемінде 6 символ" autocomplete="new-password"></div>
         <div class="ferr" id="rErr"></div>
-        <button class="bpri fw" id="rBtn" onclick="doReg()" style="margin-bottom:14px;height:44px;font-size:.9rem">Тіркелу</button>
+        <button class="bpri fw" id="rBtn" data-action="register" style="margin-bottom:14px;height:44px;font-size:.9rem">Тіркелу</button>
       </div>
       <div style="display:flex;align-items:center;gap:12px;margin:4px 0 14px">
         <div style="flex:1;height:1px;background:var(--bd2)"></div>
         <span style="font-size:.74rem;color:var(--tx3)">немесе</span>
         <div style="flex:1;height:1px;background:var(--bd2)"></div>
       </div>
-      <button class="bgoogle" onclick="doGoogle()" style="height:44px;font-size:.85rem;font-weight:500">
+      <button class="bgoogle" data-action="google-login" style="height:44px;font-size:.85rem;font-weight:500">
         <svg width="17" height="17" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
         Google арқылы кіру
       </button>
@@ -1256,820 +507,6 @@ body::after {
   </div>
 </div>
 
-<!-- SUPABASE -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.1/dist/umd/supabase.js"></script>
-<script>
-/* ═══ ANIMATED BACKGROUND ═══ */
-(function() {
-  const canvas = document.getElementById('bg-canvas');
-  const ctx = canvas.getContext('2d');
-  let W, H, particles, mouseX = 0, mouseY = 0;
-  const isDark = () => document.documentElement.getAttribute('data-theme') !== 'light';
-
-  function resize() {
-    W = canvas.width  = window.innerWidth;
-    H = canvas.height = window.innerHeight;
-  }
-
-  // Fluid orb particles
-  class Orb {
-    constructor() { this.reset(); }
-    reset() {
-      this.x  = Math.random() * W;
-      this.y  = Math.random() * H;
-      this.r  = 180 + Math.random() * 280;
-      this.vx = (Math.random() - .5) * .35;
-      this.vy = (Math.random() - .5) * .35;
-      this.phase = Math.random() * Math.PI * 2;
-      this.speed = .003 + Math.random() * .004;
-      // color
-      const cols = isDark()
-        ? ['rgba(0,212,255,', 'rgba(124,58,237,', 'rgba(0,255,136,', 'rgba(79,90,200,']
-        : ['rgba(0,120,200,',  'rgba(90,50,200,',  'rgba(0,160,90,',  'rgba(60,80,180,'];
-      this.col = cols[Math.floor(Math.random() * cols.length)];
-      this.alpha = (.03 + Math.random() * .06) * (isDark() ? 1 : .5);
-    }
-    update(t) {
-      this.phase += this.speed;
-      this.x += this.vx + Math.sin(this.phase * .7) * .4;
-      this.y += this.vy + Math.cos(this.phase * .5) * .4;
-      // mouse attraction (subtle)
-      const dx = mouseX - this.x, dy = mouseY - this.y;
-      const dist = Math.sqrt(dx*dx + dy*dy);
-      if (dist < 400) {
-        this.x += dx / dist * .15;
-        this.y += dy / dist * .15;
-      }
-      if (this.x < -this.r) this.x = W + this.r;
-      if (this.x > W + this.r) this.x = -this.r;
-      if (this.y < -this.r) this.y = H + this.r;
-      if (this.y > H + this.r) this.y = -this.r;
-    }
-    draw() {
-      const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.r);
-      g.addColorStop(0, this.col + this.alpha + ')');
-      g.addColorStop(1, this.col + '0)');
-      ctx.beginPath();
-      ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
-      ctx.fillStyle = g;
-      ctx.fill();
-    }
-  }
-
-  // Floating nodes (connection network)
-  class Node {
-    constructor() { this.reset(); }
-    reset() {
-      this.x  = Math.random() * W;
-      this.y  = Math.random() * H;
-      this.vx = (Math.random() - .5) * .5;
-      this.vy = (Math.random() - .5) * .5;
-      this.r  = 1.5 + Math.random() * 2;
-    }
-    update() {
-      this.x += this.vx; this.y += this.vy;
-      if (this.x < 0 || this.x > W) this.vx *= -1;
-      if (this.y < 0 || this.y > H) this.vy *= -1;
-    }
-    draw() {
-      ctx.beginPath();
-      ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
-      ctx.fillStyle = isDark() ? 'rgba(0,212,255,.35)' : 'rgba(0,100,200,.25)';
-      ctx.fill();
-    }
-  }
-
-  let orbs, nodes;
-  function init() {
-    orbs  = Array.from({length:7},  () => new Orb());
-    nodes = Array.from({length:50}, () => new Node());
-  }
-
-  const CONN_DIST = 130;
-  function drawConnections() {
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const dx = nodes[i].x - nodes[j].x;
-        const dy = nodes[i].y - nodes[j].y;
-        const d  = Math.sqrt(dx*dx + dy*dy);
-        if (d < CONN_DIST) {
-          const alpha = (1 - d / CONN_DIST) * (isDark() ? .18 : .1);
-          ctx.beginPath();
-          ctx.moveTo(nodes[i].x, nodes[i].y);
-          ctx.lineTo(nodes[j].x, nodes[j].y);
-          ctx.strokeStyle = isDark() ? `rgba(0,212,255,${alpha})` : `rgba(0,100,200,${alpha})`;
-          ctx.lineWidth = .6;
-          ctx.stroke();
-        }
-      }
-    }
-  }
-
-  function draw(t) {
-    ctx.clearRect(0, 0, W, H);
-    // Orb layer
-    orbs.forEach(o => { o.update(t); o.draw(); });
-    // Node network layer
-    nodes.forEach(n => { n.update(); n.draw(); });
-    drawConnections();
-    requestAnimationFrame(draw);
-  }
-
-  window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
-  window.addEventListener('resize', () => { resize(); });
-  resize();
-  init();
-  requestAnimationFrame(draw);
-
-  // Re-init colors on theme change
-  window._reinitBg = () => { orbs.forEach(o => o.reset()); };
-})();
-
-/* ═══ CONFIG ═══ */
-let supabaseClient = null;
-let currentUser = null;
-let currentSession = null;
-
-async function initSupabase() {
-  const response = await fetch('/api/config', { headers: { Accept: 'application/json' } });
-  const config = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(config.error || 'Supabase конфигурациясы жүктелмеді');
-
-  supabaseClient = window.supabase.createClient(
-    config.supabaseUrl,
-    config.supabasePublishableKey,
-    { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
-  );
-
-  supabaseClient.auth.onAuthStateChange((_event, session) => applyAuthSession(session));
-  const { data, error } = await supabaseClient.auth.getSession();
-  if (error) throw error;
-  applyAuthSession(data.session);
-}
-
-/* ═══ THEME ═══ */
-const tbtn = document.getElementById('tbtn');
-const setTheme = t => {
-  document.documentElement.setAttribute('data-theme', t);
-  localStorage.setItem('sh-t', t);
-  if (window._reinitBg) window._reinitBg();
-  tbtn.innerHTML = t === 'dark'
-    ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`
-    : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
-};
-setTheme(localStorage.getItem('sh-t') || 'dark');
-tbtn.onclick = () => setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
-
-/* ═══ ROUTER ═══ */
-function go(page, sub) {
-  if (page === 'auth') { showAuth(sub); return; }
-  if (!currentUser) { showAuth(); return; }
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
-  document.querySelectorAll('.chatwrap').forEach(p => p.classList.remove('on'));
-  if (page === 'chat') {
-    document.getElementById('pg-chat').classList.add('on');
-    document.body.style.overflow = 'hidden';
-  } else {
-    document.getElementById('pg-' + page).classList.add('on');
-    document.body.style.overflow = '';
-    window.scrollTo(0, 0);
-  }
-  document.querySelectorAll('.nb[data-p]').forEach(b => b.classList.toggle('on', b.dataset.p === page));
-  if (page === 'stats') renderStats();
-  if (page === 'flashcard') initFlashcards();
-  document.querySelector('.nav').classList.remove('hidden');
-}
-
-function showAuth(sub) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
-  document.querySelectorAll('.chatwrap').forEach(p => p.classList.remove('on'));
-  document.getElementById('pg-auth').classList.add('on');
-  document.body.style.overflow = '';
-  document.querySelector('.nav').classList.add('hidden');
-  document.querySelectorAll('.nb[data-p]').forEach(b => b.classList.remove('on'));
-  window.scrollTo(0, 0);
-  if (sub) atab(sub);
-}
-
-/* ═══ AUTH STATE ═══ */
-let _authReady = false;
-let _authUserId = null;
-function applyAuthSession(session) {
-  const user = session?.user || null;
-  const nextUserId = user?.id || null;
-  const changed = nextUserId !== _authUserId;
-  currentSession = session || null;
-  currentUser = user;
-  document.getElementById('anav').style.display = user ? 'none' : 'flex';
-  document.getElementById('unav').style.display = user ? 'flex' : 'none';
-  if (user) {
-    document.getElementById('ubadge').textContent = user.user_metadata?.display_name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'User';
-    if (changed || !_authReady) setTimeout(() => { loadHistory(); loadProgress(); }, 0);
-    if (!_authReady) go('chat');
-  } else {
-    clearHistUI();
-    showAuth();
-  }
-  _authUserId = nextUserId;
-  _authReady = true;
-}
-document.getElementById('loutbtn').onclick = async () => {
-  if (supabaseClient) await supabaseClient.auth.signOut();
-  showAuth();
-};
-
-/* ═══ AUTH FORMS ═══ */
-function atab(tab) {
-  const isL = tab === 'login';
-  const tL = document.getElementById('tabL');
-  const tR = document.getElementById('tabR');
-  if (tL) {
-    tL.style.background    = isL ? 'rgba(0,212,255,.1)' : 'transparent';
-    tL.style.color         = isL ? 'var(--ac)' : 'var(--tx2)';
-    tL.style.fontWeight    = isL ? '700' : '500';
-    tR.style.background    = !isL ? 'rgba(0,212,255,.1)' : 'transparent';
-    tR.style.color         = !isL ? 'var(--ac)' : 'var(--tx2)';
-    tR.style.fontWeight    = !isL ? '700' : '500';
-  }
-  document.getElementById('fL').style.display = isL ? 'block' : 'none';
-  document.getElementById('fR').style.display = isL ? 'none' : 'block';
-}
-async function doLogin() {
-  const e = document.getElementById('lE').value.trim(), p = document.getElementById('lP').value;
-  const err = document.getElementById('lErr'); err.textContent = '';
-  if (!e || !p) { err.textContent = 'Толтырыңыз'; return; }
-  setbl('lBtn', true, 'Кіру');
-  try {
-    if (!supabaseClient) throw new Error('Supabase әлі дайын емес');
-    const { error } = await supabaseClient.auth.signInWithPassword({ email:e, password:p });
-    if (error) throw error;
-    go('chat');
-  }
-  catch (ex) { err.textContent = autherr(ex); }
-  setbl('lBtn', false, 'Кіру');
-}
-async function doReg() {
-  const n = document.getElementById('rN').value.trim(), e = document.getElementById('rE').value.trim(), p = document.getElementById('rP').value;
-  const err = document.getElementById('rErr'); err.textContent = '';
-  if (!n || !e || !p) { err.textContent = 'Барлық өрісті толтырыңыз'; return; }
-  if (p.length < 6) { err.textContent = 'Кемінде 6 символ'; return; }
-  setbl('rBtn', true, 'Тіркелу');
-  try {
-    if (!supabaseClient) throw new Error('Supabase әлі дайын емес');
-    const { data, error } = await supabaseClient.auth.signUp({
-      email:e,
-      password:p,
-      options:{ data:{ display_name:n, full_name:n }, emailRedirectTo:window.location.origin }
-    });
-    if (error) throw error;
-    if (data.session) go('chat');
-    else err.textContent = 'Email-ге келген растау сілтемесін ашыңыз';
-  }
-  catch (ex) { err.textContent = autherr(ex); }
-  setbl('rBtn', false, 'Тіркелу');
-}
-async function doGoogle() {
-  try {
-    if (!supabaseClient) throw new Error('Supabase әлі дайын емес');
-    const { error } = await supabaseClient.auth.signInWithOAuth({
-      provider:'google',
-      options:{ redirectTo:window.location.origin }
-    });
-    if (error) throw error;
-  }
-  catch (ex) { const el = document.getElementById('lErr'); if (el) el.textContent = autherr(ex); }
-}
-const autherr = error => ({
-  invalid_credentials:'Email немесе құпия сөз қате',
-  email_not_confirmed:'Алдымен email адресіңізді растаңыз',
-  user_already_exists:'Email бұрын тіркелген',
-  weak_password:'Құпия сөз тым қарапайым',
-  validation_failed:'Email форматы дұрыс емес',
-  over_email_send_rate_limit:'Хаттар тым жиі жіберілді. Кейінірек көріңіз.'
-})[error?.code] || error?.message || 'Қате орын алды';
-const setbl = (id, l, t) => { const b = document.getElementById(id); b.disabled = l; b.textContent = l ? 'Күте тұрыңыз...' : t; };
-
-async function callAI(task, payload = {}, mayRetry = true) {
-  if (!currentUser || !currentSession?.access_token) {
-    showAuth('login');
-    throw new Error('AI қолдану үшін жүйеге кіріңіз');
-  }
-
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${currentSession.access_token}`
-    },
-    body: JSON.stringify({ task, ...payload })
-  });
-
-  if (response.status === 401 && mayRetry) {
-    const { data, error } = await supabaseClient.auth.refreshSession();
-    if (error || !data.session) throw new Error('Қайта кіріп көріңіз');
-    currentSession = data.session;
-    currentUser = data.session.user;
-    return callAI(task, payload, false);
-  }
-
-  let data = {};
-  try { data = await response.json(); } catch {}
-  if (!response.ok) throw new Error(data.error || 'AI сервисі уақытша қолжетімсіз');
-  return data;
-}
-
-/* ═══ CHAT ═══ */
-let msgs = [], chatId = null, hist = [], curMode = 'general';
-const msa = document.getElementById('msa');
-const cta = document.getElementById('cta');
-const sndbtn = document.getElementById('sndbtn');
-
-function setMode(btn) {
-  document.querySelectorAll('.modesel').forEach(b => b.classList.remove('on'));
-  btn.classList.add('on');
-  curMode = btn.dataset.mode;
-}
-
-sndbtn.onclick = sendMsg;
-cta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
-cta.addEventListener('input', () => { cta.style.height = 'auto'; cta.style.height = Math.min(cta.scrollHeight, 140) + 'px'; });
-document.getElementById('newbtn').onclick = newChat;
-document.getElementById('clrbtn').onclick = () => { if (confirm('Чатты тазалайсыз ба?')) newChat(); };
-document.getElementById('mobbtn').onclick = () => document.getElementById('csb').classList.toggle('open');
-
-function newChat() {
-  chatId = null; msgs = [];
-  msa.innerHTML = ''; msa.appendChild(mkWelcome());
-  hlHist(); document.getElementById('csb').classList.remove('open');
-}
-
-function mkWelcome() {
-  const d = document.createElement('div'); d.className = 'welcome'; d.id = 'wlc';
-  d.innerHTML = `<div class="wico"><svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M12 2L20 7V14Q20 20 12 23Q4 20 4 14V7Z" stroke="var(--ac)" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="13" r="3" fill="var(--ac)" fill-opacity=".8"/><path d="M12 4V10" stroke="var(--ac)" stroke-width="1.5" stroke-linecap="round"/></svg></div>
-    <h2>Сәлем! Мен Smart Helper</h2>
-    <p>Режим таңдап, сұрағыңызды жазыңыз.<br>Оқу, ғылым, математика — бәрі бойынша.</p>
-    <div class="qps">
-      <button class="qp" onclick="qpu(this)">sin(30°) = неше?</button>
-      <button class="qp" onclick="qpu(this)">Эссе жазуға көмектес</button>
-      <button class="qp" onclick="qpu(this)">Қазақстан тарихы</button>
-      <button class="qp" onclick="qpu(this)">Атом құрылысы</button>
-    </div>`;
-  return d;
-}
-
-function qpu(btn) { cta.value = btn.textContent.trim(); cta.focus(); }
-
-async function sendMsg() {
-  const txt = cta.value.trim(); if (!txt || sndbtn.disabled) return;
-  document.getElementById('wlc')?.remove();
-  addBubble(txt, true); cta.value = ''; cta.style.height = 'auto';
-  msgs.push({ role: 'user', content: txt });
-  sndbtn.disabled = true;
-  const tid = 'td' + Date.now();
-  addTyping(tid);
-  try {
-    const d = await callAI('chat', { mode: curMode, messages: msgs });
-    const reply = d.text || 'Жауап алынбады';
-    rmEl(tid); addBubble(reply, false);
-    msgs.push({ role: 'assistant', content: reply });
-    addStat('q', curMode); addXP(10); renderStats();
-    if (msgs.length === 2) saveChat(txt); else saveChat(msgs[0].content);
-  } catch (error) {
-    rmEl(tid);
-    addBubble(error.message || 'AI сервисі уақытша қолжетімсіз.', false);
-  }
-  sndbtn.disabled = false;
-}
-
-function addBubble(text, isUser) {
-  const d = document.createElement('div'); d.className = 'msg' + (isUser ? ' user' : '');
-  const av = `<div class="mav ${isUser ? 'uav' : 'aiav'}">${isUser
-    ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--tx2)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`
-    : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L20 7V14Q20 20 12 23Q4 20 4 14V7Z" stroke="white" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="2.5" fill="white" fill-opacity=".95"/><path d="M12 4V10" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>`
-  }</div>`;
-  if (isUser) {
-    const uid = 'u' + Date.now();
-    d.innerHTML = av + `<div class="msg-wrap"><div class="mb ub" id="${uid}">${esc(text)}</div>
-      <div class="rate-row" style="justify-content:flex-end">
-        <button class="act-btn" title="Көшіру" onclick="copyMsg(this,'${uid}')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-        <button class="act-btn" title="Өңдеу" onclick="editMsg(this,'${uid}')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-      </div></div>`;
-  } else {
-    const rid = 'r' + Date.now();
-    d.innerHTML = av + `<div class="msg-wrap"><div class="mb aib" id="${rid}">${fmtTxt(text)}</div>
-      <div class="rate-row">
-        <button class="act-btn" title="Көшіру" onclick="copyMsg(this,'${rid}')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-        <button class="act-btn" title="Жақсы" onclick="rateMsg(this,'good')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg></button>
-        <button class="act-btn" title="Нашар" onclick="rateMsg(this,'bad')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/><path d="M17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg></button>
-      </div></div>`;
-  }
-  msa.appendChild(d); msa.scrollTop = msa.scrollHeight;
-}
-
-function addTyping(id) {
-  const d = document.createElement('div'); d.className = 'msg'; d.id = id;
-  d.innerHTML = `<div class="mav aiav"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L20 7V14Q20 20 12 23Q4 20 4 14V7Z" stroke="white" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="2.5" fill="white" fill-opacity=".95"/></svg></div>
-    <div class="mb aib typing"><span></span><span></span><span></span></div>`;
-  msa.appendChild(d); msa.scrollTop = msa.scrollHeight;
-}
-function rmEl(id) { document.getElementById(id)?.remove(); }
-
-function rateMsg(btn, type) {
-  const row = btn.closest('.rate-row');
-  const btns = row.querySelectorAll('.act-btn');
-  const previous = row.dataset.rating || '';
-  const next = previous === type ? '' : type;
-  row.dataset.rating = next;
-  btns[1]?.classList.toggle('liked', next === 'good');
-  btns[2]?.classList.toggle('disliked', next === 'bad');
-  addStat('r', { previous, next });
-  renderStats();
-}
-function copyMsg(btn, id) {
-  const el = document.getElementById(id); if (!el) return;
-  navigator.clipboard.writeText(el.innerText).then(() => {
-    btn.classList.add('copied');
-    const orig = btn.innerHTML;
-    btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>`;
-    setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('copied'); }, 1500);
-  });
-}
-function editMsg(btn, id) {
-  const el = document.getElementById(id); if (!el) return;
-  cta.value = el.innerText; cta.style.height = 'auto';
-  cta.style.height = Math.min(cta.scrollHeight, 140) + 'px'; cta.focus();
-}
-
-/* ═══ STATS & XP ═══ */
-const STAT_KEY = 'sh-stats', XP_KEY = 'sh-xp';
-let progressSyncTimer = null;
-const XP_LEVELS = [
-  { min:0,    name:'Жаңадан бастаушы', next:100   },
-  { min:100,  name:'Оқушы',            next:300   },
-  { min:300,  name:'Білгір',           next:600   },
-  { min:600,  name:'Данышпан',         next:1000  },
-  { min:1000, name:'Шебер',            next:1500  },
-  { min:1500, name:'Зерттеуші',        next:2200  },
-  { min:2200, name:'Ғалым',            next:3000  },
-  { min:3000, name:'Академик',         next:9999  },
-];
-const ACHIEVEMENTS = [
-  { id:'first',   icon:'🚀', name:'Алғашқы қадам', desc:'1 сұрақ',    req:s => s.total >= 1   },
-  { id:'ten',     icon:'🔟', name:'10 сұрақ',      desc:'10 сұрақ',   req:s => s.total >= 10  },
-  { id:'fifty',   icon:'⚡', name:'50 сұрақ',      desc:'50 сұрақ',   req:s => s.total >= 50  },
-  { id:'streak3', icon:'🔥', name:'3 күн',          desc:'3 күн streak',req:s => calcStreak() >= 3 },
-  { id:'rating',  icon:'⭐', name:'Сапалы',         desc:'10 оң баға', req:s => s.good >= 10   },
-  { id:'quiz10',  icon:'🧠', name:'Тест шебері',    desc:'10 тест',    req:s => (s.quizzes||0) >= 10 },
-  { id:'flash',   icon:'🃏', name:'Карточка',       desc:'20 карточка',req:s => (s.cards||0) >= 20 },
-  { id:'plan',    icon:'📅', name:'Жоспарлаушы',   desc:'3 жоспар',   req:s => (s.plans||0) >= 3 },
-];
-function getStats() {
-  const empty = {total:0,today:0,good:0,bad:0,lastDate:'',streak:0,subjects:{},quizzes:0,cards:0,plans:0};
-  try {
-    const stored = JSON.parse(localStorage.getItem(STAT_KEY));
-    return stored ? {...empty,...stored,subjects:{...empty.subjects,...(stored.subjects||{})}} : empty;
-  } catch { return empty; }
-}
-function saveStats(s) { localStorage.setItem(STAT_KEY, JSON.stringify(s)); queueProgressSync(); }
-function getXP() { return parseInt(localStorage.getItem(XP_KEY) || '0'); }
-function addXP(n) { localStorage.setItem(XP_KEY, getXP() + n); queueProgressSync(); }
-
-function localDateKey(date = new Date()) {
-  const y=date.getFullYear(),m=String(date.getMonth()+1).padStart(2,'0'),d=String(date.getDate()).padStart(2,'0');
-  return `${y}-${m}-${d}`;
-}
-function dayIndex(value) {
-  if (!value) return null;
-  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00`) : new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return Math.floor(new Date(parsed.getFullYear(),parsed.getMonth(),parsed.getDate()).getTime()/86400000);
-}
-function queueProgressSync() {
-  clearTimeout(progressSyncTimer);
-  progressSyncTimer=setTimeout(async()=>{
-    if (!currentUser || !supabaseClient) return;
-    const { error } = await supabaseClient.from('progress').upsert({
-      user_id:currentUser.id,
-      stats:getStats(),
-      xp:getXP(),
-      updated_at:new Date().toISOString()
-    },{onConflict:'user_id'});
-    if (error) console.warn('Progress sync failed',error.code||error.message);
-  },500);
-}
-async function loadProgress() {
-  if (!currentUser || !supabaseClient) return;
-  try {
-    const { data:cloud, error } = await supabaseClient.from('progress')
-      .select('stats,xp').eq('user_id',currentUser.id).maybeSingle();
-    if (error) throw error;
-    if (cloud?.stats) localStorage.setItem(STAT_KEY,JSON.stringify(cloud.stats));
-    if (Number.isFinite(Number(cloud?.xp))) localStorage.setItem(XP_KEY,String(cloud.xp));
-    if (!cloud) queueProgressSync();
-    renderStats();
-  } catch (error) { console.warn('Progress load failed',error?.code||error?.message); }
-}
-function addStat(type, val) {
-  const s = getStats();
-  const today = localDateKey();
-  if (s.lastDate !== today && type === 'q') {
-    const previousDay=dayIndex(s.lastDate),currentDay=dayIndex(today);
-    s.streak=previousDay!==null&&currentDay-previousDay===1?Math.max(1,Number(s.streak)||1)+1:1;
-    s.today=0;
-    s.lastDate=today;
-  }
-  if (type === 'q') { s.total++; s.today++; s.subjects[val] = (s.subjects[val]||0) + 1; }
-  else if (type === 'r') {
-    if (val.previous === 'good') s.good=Math.max(0,s.good-1);
-    if (val.previous === 'bad') s.bad=Math.max(0,s.bad-1);
-    if (val.next === 'good') s.good++;
-    if (val.next === 'bad') s.bad++;
-  }
-  else if (type === 'quiz') s.quizzes = (s.quizzes||0) + 1;
-  else if (type === 'card') s.cards = (s.cards||0) + 1;
-  else if (type === 'plan') s.plans = (s.plans||0) + 1;
-  saveStats(s);
-}
-function renderStats() {
-  const s = getStats();
-  document.getElementById('stTotal').textContent = s.total;
-  document.getElementById('stToday').textContent = s.today;
-  document.getElementById('stGood').textContent = s.good;
-  document.getElementById('stBad').textContent = s.bad;
-  const tot = s.good + s.bad;
-  document.getElementById('rPct').textContent = tot ? Math.round(s.good/tot*100)+'%' : '–';
-  document.getElementById('rStreak').textContent = calcStreak();
-  const xp = getXP();
-  let lvlIdx = 0;
-  for (let i = XP_LEVELS.length-1; i >= 0; i--) { if (xp >= XP_LEVELS[i].min) { lvlIdx = i; break; } }
-  const lvl = XP_LEVELS[lvlIdx];
-  const nextLvl = XP_LEVELS[Math.min(lvlIdx+1, XP_LEVELS.length-1)];
-  const pct = Math.min(100, Math.round((xp-lvl.min)/(lvl.next-lvl.min)*100));
-  document.getElementById('xpLevel').textContent = `Деңгей ${lvlIdx+1}`;
-  document.getElementById('xpTitle').textContent = lvl.name;
-  document.getElementById('xpCurrent').textContent = xp+' XP';
-  document.getElementById('xpNext').textContent = lvl.next+' XP';
-  document.getElementById('xpBarFill').style.width = pct+'%';
-  document.getElementById('xpInfo').textContent = `${lvl.next-xp} XP жинасаң — "${nextLvl.name}" деңгейіне өтесің`;
-  const badges = document.getElementById('xpBadges'); badges.innerHTML = '';
-  if (lvlIdx >= 3) badges.innerHTML = `<span class="badge badge-gold">${lvl.name}</span>`;
-  else if (lvlIdx >= 1) badges.innerHTML = `<span class="badge badge-silver">${lvl.name}</span>`;
-  else badges.innerHTML = `<span class="badge badge-bronze">${lvl.name}</span>`;
-  const ag = document.getElementById('achievGrid'); ag.innerHTML = '';
-  ACHIEVEMENTS.forEach(a => {
-    const unlocked = a.req(s);
-    ag.innerHTML += `<div class="achievement${unlocked?' unlocked':''}">
-      <span class="ach-icon">${a.icon}</span>
-      <span class="ach-name">${a.name}</span>
-      <span class="ach-desc">${a.desc}</span>
-      ${!unlocked?`<svg class="lock-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--tx3)" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`:''}
-    </div>`;
-  });
-  const bc = document.getElementById('barChart'); bc.innerHTML = '';
-  const labels = {general:'Жалпы',math:'Математика',history:'Тарих',science:'Ғылым'};
-  const max = Math.max(...Object.values(s.subjects), 1);
-  Object.entries(labels).forEach(([k,l]) => {
-    const v = s.subjects[k]||0, pct2 = Math.round(v/max*100);
-    bc.innerHTML += `<div class="bar-row"><span class="bar-label">${l}</span><div class="bar-bg"><div class="bar-fill" style="width:${pct2}%"></div></div><span class="bar-val">${v}</span></div>`;
-  });
-}
-function calcStreak() {
-  const s = getStats(); if (!s.lastDate) return 0;
-  const last=dayIndex(s.lastDate),today=dayIndex(localDateKey());
-  return last!==null&&today-last<=1?Number(s.streak||1):0;
-}
-
-/* ═══ SUPABASE HISTORY ═══ */
-async function saveChat(first) {
-  if (!currentUser || !supabaseClient) return;
-  if (!chatId) chatId = crypto.randomUUID();
-  const title = first.length > 40 ? first.slice(0,40)+'…' : first;
-  const row={id:chatId,user_id:currentUser.id,title,messages:msgs.slice(-40),updated_at:new Date().toISOString()};
-  const { error } = await supabaseClient.from('chats').upsert(row,{onConflict:'id'});
-  if (error) { console.warn('Chat save failed',error.code||error.message); return; }
-  hist=[{id:row.id,title:row.title,messages:row.messages,updated_at:row.updated_at},...hist.filter(ch=>ch.id!==row.id)].slice(0,60);
-  renderHist();
-}
-async function loadHistory() {
-  if (!currentUser || !supabaseClient) return;
-  const { data, error } = await supabaseClient.from('chats')
-    .select('id,title,messages,updated_at').order('updated_at',{ascending:false}).limit(60);
-  if (error) { console.warn('History load failed',error.code||error.message); return; }
-  hist=data||[];
-  renderHist();
-}
-function clearHistUI() { hist=[]; renderHist(); }
-function renderHist() {
-  const l = document.getElementById('hlist'), e = document.getElementById('hempty');
-  l.innerHTML = '';
-  if (!hist.length) { e && l.appendChild(e); return; }
-  hist.forEach(ch => {
-    const d = document.createElement('button'); d.className = 'hi'+(ch.id===chatId?' on':'');
-    d.innerHTML = `<div class="hi-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--tx3)" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><span class="hit">${esc(ch.title||'Сұхбат')}</span>`;
-    d.onclick = () => { chatId=ch.id; msgs=ch.messages||[]; msa.innerHTML=''; msgs.forEach(m => addBubble(m.content,m.role==='user')); hlHist(); document.getElementById('csb').classList.remove('open'); };
-    l.appendChild(d);
-  });
-}
-function hlHist() { document.querySelectorAll('.hi').forEach((el,i) => el.classList.toggle('on',hist[i]?.id===chatId)); }
-
-/* ═══ AI TOOLS ═══ */
-async function runTool(type, btn) {
-  const configs = {
-    sum:   {inId:'sumIn',   outId:'sumOut'},
-    trans: {inId:'transIn', outId:'transOut'},
-    fix:   {inId:'fixIn',   outId:'fixOut'},
-    idea:  {inId:'ideaIn',  outId:'ideaOut'},
-  };
-  const cfg = configs[type];
-  if (!cfg) return;
-  const inp = document.getElementById(cfg.inId).value.trim();
-  const out = document.getElementById(cfg.outId);
-  if (!inp) { out.textContent='Мәтін енгізіңіз'; out.classList.add('show'); return; }
-  const original = btn?.innerHTML;
-  if (btn) btn.disabled = true;
-  out.className='tc-result show'; out.innerHTML='<span class="tloading">Өңделуде...</span>';
-  try {
-    const payload = { input: inp };
-    if (type === 'trans') payload.targetLanguage = document.getElementById('transLang').value;
-    const response = await callAI(type, payload);
-    out.textContent = response.text || 'Жауап алынбады';
-  } catch (error) {
-    out.textContent = error.message || 'Қате орын алды.';
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = original; }
-  }
-}
-
-/* ═══ STUDY PLANNER ═══ */
-async function runPlanner() {
-  const topic=document.getElementById('planTopic').value.trim(),goal=document.getElementById('planGoal').value.trim(),days=document.getElementById('planDays').value,hours=document.getElementById('planHours').value;
-  if (!topic) { alert('Тақырып жазыңыз'); return; }
-  const btn=document.getElementById('planBtn'); btn.disabled=true; btn.textContent='Жасалуда...';
-  const result=document.getElementById('planResult');
-  result.innerHTML='<div class="plan-empty"><span class="tloading" style="display:inline-flex">Жасалуда...</span></div>';
-  try {
-    const response=await callAI('planner',{topic,goal,days:Number(days),hours:Number(hours)});
-    const plan=response.data;
-    if (!Array.isArray(plan?.days) || !plan.days.length) throw new Error('Жоспар алынбады');
-    renderPlan(plan.days, result);
-    addStat('plan',1); addXP(20);
-  } catch (error) {
-    result.textContent=error.message||'Қате орын алды.';
-    result.style.color='var(--ac4)';
-    result.style.padding='16px';
-  }
-  btn.disabled=false; btn.innerHTML=`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Жоспар жасау`;
-}
-
-function renderPlan(days, result) {
-  const tags={math:'tag-math',sci:'tag-sci',hist:'tag-hist',gen:'tag-gen'};
-  const labels={math:'Математика',sci:'Ғылым',hist:'Тарих',gen:'Жалпы'};
-  result.replaceChildren();
-  result.style.color='';
-  result.style.padding='';
-
-  days.forEach(day=>{
-    const item=document.createElement('div'); item.className='plan-item';
-    const dayBox=document.createElement('div'); dayBox.className='plan-day';
-    const dayNumber=document.createElement('div'); dayNumber.className='plan-day-n'; dayNumber.textContent=String(day.day);
-    const dayLabel=document.createElement('div'); dayLabel.className='plan-day-l'; dayLabel.textContent='КҮН';
-    dayBox.append(dayNumber,dayLabel);
-
-    const content=document.createElement('div'); content.className='plan-content';
-    const title=document.createElement('h4'); title.textContent=String(day.title||'');
-    const tasks=document.createElement('p'); tasks.textContent=String(day.tasks||'');
-    const tag=document.createElement('span');
-    const subject=Object.hasOwn(tags,day.subject)?day.subject:'gen';
-    tag.className=`plan-tag ${tags[subject]}`; tag.textContent=labels[subject];
-    content.append(title,tasks,tag);
-    item.append(dayBox,content);
-    result.appendChild(item);
-  });
-}
-
-/* ═══ FLASHCARDS ═══ */
-const FC_BANK = {
-  math:[
-    {q:'Пифагор теоремасы?',a:'a² + b² = c²'},
-    {q:'sin(30°) = ?',a:'0.5 = 1/2'},
-    {q:'cos(60°) = ?',a:'0.5 = 1/2'},
-    {q:'π ≈ ?',a:'3.14159...'},
-    {q:'Квадрат теңдеудің дискриминанты?',a:'D = b² − 4ac'},
-    {q:'Тікбұрышты үшбұрыштың ауданы?',a:'S = (a × h) / 2'},
-  ],
-  history:[
-    {q:'Қазақ хандығы қашан құрылды?',a:'1465 жылы, Керей мен Жәнібек хандардың тұсында'},
-    {q:'Қазақстан тәуелсіздік алған жыл?',a:'1991 жыл, 16 желтоқсан'},
-    {q:'Ұлы Жібек жолы не болды?',a:'Азия мен Еуропаны байланыстырған сауда жолы'},
-    {q:'Алаш қозғалысы қашан болды?',a:'1917-1920 жж.'},
-  ],
-  science:[
-    {q:'Фотосинтез дегеніміз не?',a:'Өсімдіктердің күн энергиясымен глюкоза синтездеуі'},
-    {q:'Ньютонның 1-ші заңы?',a:'Инерция заңы: сыртқы күш болмаса дене күйін сақтайды'},
-    {q:'Судың химиялық формуласы?',a:'H₂O'},
-    {q:'Жарықтың жылдамдығы?',a:'≈ 300,000 км/с'},
-    {q:'Атомның ядросы немен тұрады?',a:'Протондар мен нейтрондардан'},
-  ],
-  kazakh:[
-    {q:'Қазақ алфавитіндегі әріп саны?',a:'42 әріп (латынша: 32)'},
-    {q:'Абайдың «Қара сөздері» неше?',a:'45 қара сөз'},
-    {q:'"Жер" сөзінің орысша аудармасы?',a:'Земля, почва'},
-    {q:'"Мен оқушымын" — орысша?',a:'Я ученик / Я студент'},
-  ],
-};
-let fcCards=[...FC_BANK.math], fcIdx=0, fcSubj='math', fcCorrect=0, fcTotal=0;
-function initFlashcards() { loadFCSubj(fcSubj); }
-function setFCSubj(btn) { document.querySelectorAll('.fc-subj').forEach(b=>b.classList.remove('on')); btn.classList.add('on'); fcSubj=btn.dataset.subj; loadFCSubj(fcSubj); }
-function loadFCSubj(subj) { fcCards=[...(FC_BANK[subj]||FC_BANK.math)]; shuffleArr(fcCards); fcIdx=0; fcCorrect=0; fcTotal=0; showCard(); }
-function showCard() {
-  if (!fcCards.length) return;
-  const card=fcCards[fcIdx%fcCards.length];
-  document.getElementById('fcQuestion').textContent=card.q;
-  document.getElementById('fcAnswer').textContent=card.a;
-  document.getElementById('cardInner').classList.remove('flipped');
-  document.getElementById('fcProgress').textContent=`${fcIdx+1} / ${fcCards.length}`;
-}
-function flipCard() { document.getElementById('cardInner').classList.toggle('flipped'); }
-function fcResult(type) { if(type==='good') fcCorrect++; fcTotal++; addStat('card',1); addXP(5); nextCard(); }
-function nextCard() { fcIdx=(fcIdx+1)%fcCards.length; showCard(); }
-async function genFlashcards() {
-  const topic=document.getElementById('fcGenTopic').value.trim(); if(!topic) return;
-  const btn=document.getElementById('fcGenBtn'); btn.disabled=true; btn.textContent='Жасалуда...';
-  try {
-    const response=await callAI('flashcards',{topic});
-    const parsed=response.data;
-    if(parsed.cards?.length){fcCards=parsed.cards;fcIdx=0;document.getElementById('fcProgress').textContent=`1/${fcCards.length}`;showCard();document.getElementById('fcGenTopic').value='';}
-  } catch (error) { alert(error.message||'Қате орын алды'); }
-  btn.disabled=false; btn.innerHTML=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> AI карточкалар жасау`;
-}
-
-/* ═══ QUIZ ═══ */
-let quizQuestions=[], quizCurrent=0, quizScore=0;
-async function genQuiz() {
-  const topic=document.getElementById('quizTopic').value.trim(),count=document.getElementById('quizCount').value;
-  if(!topic) return;
-  const btn=document.getElementById('quizGenBtn'); btn.disabled=true; btn.textContent='Жасалуда...';
-  try {
-    const response=await callAI('quiz',{topic,count:Number(count)});
-    const parsed=response.data;
-    if(parsed.questions?.length){quizQuestions=parsed.questions;quizCurrent=0;quizScore=0;document.getElementById('quizSetup').style.display='none';document.getElementById('quizActive').style.display='block';showQuizQ();}
-  } catch (error) { alert(error.message||'Қате орын алды'); }
-  btn.disabled=false; btn.innerHTML=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Тест жасау`;
-}
-function showQuizQ() {
-  if(quizCurrent>=quizQuestions.length){showQuizResult();return;}
-  const q=quizQuestions[quizCurrent],total=quizQuestions.length;
-  document.getElementById('quizNum').textContent=`Сұрақ ${quizCurrent+1} / ${total}`;
-  document.getElementById('quizQ').textContent=q.q;
-  document.getElementById('quizProgressFill').style.width=((quizCurrent/total)*100)+'%';
-  const opts=document.getElementById('quizOpts'); opts.innerHTML='';
-  ['А','Б','В','Г'].forEach((l,i)=>{
-    const btn=document.createElement('button'); btn.className='quiz-opt';
-    btn.textContent=`${l}. ${q.opts[i]}`; btn.onclick=()=>answerQuiz(i); opts.appendChild(btn);
-  });
-}
-function answerQuiz(idx) {
-  const q=quizQuestions[quizCurrent],btns=document.querySelectorAll('.quiz-opt');
-  btns.forEach(b=>b.classList.add('disabled')); btns[q.correct].classList.add('correct');
-  if(idx===q.correct){quizScore++;addXP(15);}else{btns[idx].classList.add('wrong');}
-  setTimeout(()=>{quizCurrent++;showQuizQ();},1200);
-}
-function showQuizResult() {
-  document.getElementById('quizActive').style.display='none';
-  document.getElementById('quizResult').style.display='block';
-  const pct=Math.round(quizScore/quizQuestions.length*100);
-  document.getElementById('quizScoreN').textContent=`${quizScore}/${quizQuestions.length}`;
-  document.getElementById('quizScoreMsg').textContent=['Жалғастыр!','Жаман емес!','Жақсы!','Өте жақсы!','Керемет!'][Math.min(4,Math.floor(pct/20))];
-  addStat('quiz',1);
-  addXP(quizScore*5);
-}
-function resetQuiz() { document.getElementById('quizResult').style.display='none'; document.getElementById('quizSetup').style.display='block'; }
-
-/* ═══ UTILS ═══ */
-function fmtTxt(t) {
-  return esc(t)
-    .replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g,'<em>$1</em>')
-    .replace(/`(.*?)`/g,`<code style="background:var(--sf2);padding:2px 6px;border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:.8em">$1</code>`)
-    .replace(/\n/g,'<br>');
-}
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function shuffleArr(a) { for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} }
-
-/* ═══ BURGER ═══ */
-document.getElementById('burger').onclick = () => document.getElementById('nlinks').classList.toggle('open');
-const s = document.createElement('style');
-s.textContent = `@media(max-width:680px){.nlinks.open{display:flex!important;flex-direction:column;position:fixed;top:var(--nav);left:0;right:0;background:var(--sf);border-bottom:1px solid var(--bd);padding:8px 14px 14px;z-index:200;gap:2px;backdrop-filter:blur(20px)}}`;
-document.head.appendChild(s);
-
-/* ═══ INIT ═══ */
-initFlashcards();
-initSupabase().catch(error => {
-  console.error('Supabase init failed:',error?.message);
-  showAuth('login');
-  const el=document.getElementById('lErr');
-  if(el) el.textContent='Supabase баптауы аяқталмаған';
-});
-</script>
+<script type="module" src="/src/main.js"></script>
 </body>
 </html>
