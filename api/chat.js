@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { searchStudySources } from './sources.js';
+import { searchStudySources } from '../lib/study-sources.js';
 
 const FAST_MODEL = process.env.OPENROUTER_FAST_MODEL || 'google/gemma-4-26b-a4b-it:free';
 const FAST_FALLBACK_MODEL =
