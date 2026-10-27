@@ -3,6 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 const FAST_MODEL = process.env.OPENROUTER_FAST_MODEL || 'google/gemma-4-26b-a4b-it:free';
 const FAST_FALLBACK_MODEL =
   process.env.OPENROUTER_FAST_FALLBACK_MODEL || 'google/gemma-4-31b-it:free';
+const FAST_LAST_RESORT_MODEL =
+  process.env.OPENROUTER_FAST_LAST_RESORT_MODEL || 'openrouter/free';
 const DEEP_MODEL =
   process.env.OPENROUTER_DEEP_MODEL ||
   process.env.OPENROUTER_MODEL ||
@@ -567,7 +569,8 @@ function getModelAttempts(task, isStructured, deep, hasImage = false) {
         ]
       : [
           { model: FAST_MODEL, timeoutMs: 18_000 },
-          { model: FAST_FALLBACK_MODEL, timeoutMs: 18_000 }
+          { model: FAST_FALLBACK_MODEL, timeoutMs: 18_000 },
+          { model: FAST_LAST_RESORT_MODEL, timeoutMs: 18_000 }
         ];
 
   return attempts.filter(
