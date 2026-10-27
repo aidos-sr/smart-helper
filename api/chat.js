@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 
-const FAST_MODEL = process.env.OPENROUTER_FAST_MODEL || 'inclusionai/ling-3.0-flash:free';
+const FAST_MODEL = process.env.OPENROUTER_FAST_MODEL || 'google/gemma-4-26b-a4b-it:free';
 const FAST_FALLBACK_MODEL =
   process.env.OPENROUTER_FAST_FALLBACK_MODEL || 'google/gemma-4-31b-it:free';
 const DEEP_MODEL =
@@ -24,7 +24,7 @@ const MAX_INPUT_CHARS = 12_000;
 const MAX_CHAT_CHARS = 30_000;
 const MAX_ATTACHMENT_DATA_CHARS = 3_500_000;
 const MAX_TEXT_ATTACHMENT_CHARS = 20_000;
-const RETRYABLE_UPSTREAM_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+const RETRYABLE_UPSTREAM_STATUSES = new Set([404, 408, 429, 500, 502, 503, 504]);
 
 const CHAT_SYSTEM_PROMPT =
   'Сен Smart Helper атты оқу көмекшісісің. Қазақ немесе орыс тілінде, пайдаланушы қай тілде сұраса, сол тілде жауап бер. Жауабың түсінікті, дәл, пайдалы және ынталандырушы болсын. Білмесең, ойдан шығармай ашық айт.';
