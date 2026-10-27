@@ -168,7 +168,7 @@ let chatRequestActive = false;
 const retryRequests = new Map();
 const answerTexts = new Map();
 let webEnabled = localStorage.getItem('sh-web') !== 'off';
-let deepEnabled = localStorage.getItem('sh-deep') === 'on';
+let deepEnabled = localStorage.getItem('sh-deep-v2') === 'on';
 const msa = document.getElementById('msa');
 const cta = document.getElementById('cta');
 const sndbtn = document.getElementById('sndbtn');
@@ -186,19 +186,19 @@ function setWebEnabled(enabled) {
   webbtn.classList.toggle('on', enabled);
   webbtn.setAttribute('aria-pressed', String(enabled));
   webbtn.title = enabled
-    ? 'Wikipedia дереккөздері қосулы'
-    : 'Wikipedia дереккөздері өшірулі';
+    ? 'Интернеттен, Wikipedia және ғылыми дерекқорлардан іздеу қосулы'
+    : 'Интернет іздеуі өшірулі';
 }
 
 function setDeepEnabled(enabled) {
   deepEnabled = enabled;
-  localStorage.setItem('sh-deep', enabled ? 'on' : 'off');
+  localStorage.setItem('sh-deep-v2', enabled ? 'on' : 'off');
   deepbtn.classList.toggle('on', enabled);
   deepbtn.setAttribute('aria-pressed', String(enabled));
   deepbtn.title = enabled
-    ? 'Терең жауап қосулы — жауап ұзағырақ жасалуы мүмкін'
+    ? 'Күштірек Gemini 3.8 Flash моделі қолданылады. OpenRouter тарифі, ал веб-іздеу қосымша ақы алуы мүмкін.'
     : 'Жылдам жауап режимі қосулы';
-  modelBadgeText.textContent = enabled ? 'Терең AI' : 'Жылдам AI';
+  modelBadgeText.textContent = enabled ? 'Күшті AI · тариф' : 'Жылдам AI';
 }
 
 setWebEnabled(webEnabled);
@@ -425,15 +425,17 @@ async function runAssistantRequest(request, retryKey = crypto.randomUUID()) {
 
 function assistantExtras(sources = [], webStatus = '') {
   const sourceLinks = sources
-    .filter((source) => /^https:\/\/[a-z-]+\.wikipedia\.org\//i.test(source?.url || ''))
+    .filter((source) => {
+      try { return new URL(source?.url).protocol === 'https:'; } catch { return false; }
+    })
     .slice(0, 4)
-    .map((source, index) => `<a href="${esc(source.url)}" target="_blank" rel="noopener noreferrer"><span>${index + 1}</span>${esc(source.title || 'Wikipedia')}</a>`)
+    .map((source, index) => `<a href="${esc(source.url)}" target="_blank" rel="noopener noreferrer"><span>${index + 1}</span>${esc(source.title || source.provider || 'Интернет көзі')}</a>`)
     .join('');
   const webStatusText = {
-    no_results: 'Wikipedia: сәйкес дерек табылмады',
-    unavailable: 'Wikipedia уақытша қолжетімсіз'
+    no_results: 'Интернеттен сәйкес дерек табылмады',
+    unavailable: 'Интернет көздері уақытша қолжетімсіз'
   }[webStatus] || '';
-  return `${sourceLinks ? `<div class="source-links"><small>Wikipedia дереккөздері</small>${sourceLinks}</div>` : ''}${webStatusText ? `<div class="source-status">${esc(webStatusText)}</div>` : ''}`;
+  return `${sourceLinks ? `<div class="source-links"><small>Интернет дереккөздері</small>${sourceLinks}</div>` : ''}${webStatusText ? `<div class="source-status">${esc(webStatusText)}</div>` : ''}`;
 }
 
 function addBubble(text, isUser, sources = [], webStatus = '', options = {}) {

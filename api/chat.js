@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { searchStudySources } from './sources.js';
 
 const FAST_MODEL = process.env.OPENROUTER_FAST_MODEL || 'google/gemma-4-26b-a4b-it:free';
 const FAST_FALLBACK_MODEL =
@@ -6,15 +7,19 @@ const FAST_FALLBACK_MODEL =
 const FAST_LAST_RESORT_MODEL =
   process.env.OPENROUTER_FAST_LAST_RESORT_MODEL || 'openrouter/free';
 const DEEP_MODEL =
-  process.env.OPENROUTER_DEEP_MODEL ||
+  process.env.OPENROUTER_DEEP_MODEL || 'google/gemini-3.8-flash';
+const DEEP_FALLBACK_MODEL =
+  process.env.OPENROUTER_DEEP_FALLBACK_MODEL ||
   process.env.OPENROUTER_MODEL ||
   'nvidia/nemotron-3-ultra-550b-a55b:free';
-const DEEP_FALLBACK_MODEL =
-  process.env.OPENROUTER_DEEP_FALLBACK_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free';
+const DEEP_LAST_RESORT_MODEL =
+  process.env.OPENROUTER_DEEP_LAST_RESORT_MODEL || 'openrouter/free';
 const STRUCTURED_MODEL =
-  process.env.OPENROUTER_STRUCTURED_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free';
+  process.env.OPENROUTER_STRUCTURED_MODEL || 'google/gemma-4-31b-it:free';
 const STRUCTURED_FALLBACK_MODEL =
-  process.env.OPENROUTER_STRUCTURED_FALLBACK_MODEL || 'google/gemma-4-31b-it:free';
+  process.env.OPENROUTER_STRUCTURED_FALLBACK_MODEL || 'google/gemma-4-26b-a4b-it:free';
+const STRUCTURED_LAST_RESORT_MODEL =
+  process.env.OPENROUTER_STRUCTURED_LAST_RESORT_MODEL || 'openrouter/free';
 const VISION_MODEL = process.env.OPENROUTER_VISION_MODEL || 'google/gemma-4-31b-it:free';
 const VISION_FALLBACK_MODEL =
   process.env.OPENROUTER_VISION_FALLBACK_MODEL || 'openrouter/free';
@@ -243,11 +248,12 @@ async function getOnlineSources(query) {
   const cached = webCache.get(cacheKey);
   if (cached?.expiresAt > Date.now()) return cached.result;
 
-  const searches = await Promise.allSettled(
-    getWikipediaLanguages(normalizedQuery).map((language) =>
+  const searches = await Promise.allSettled([
+    searchStudySources(normalizedQuery).then((result) => result.sources),
+    ...getWikipediaLanguages(normalizedQuery).map((language) =>
       searchWikipedia(normalizedQuery, language)
     )
-  );
+  ]);
   const fulfilled = searches.filter((result) => result.status === 'fulfilled');
   const seen = new Set();
   const sources = fulfilled
@@ -257,7 +263,7 @@ async function getOnlineSources(query) {
       seen.add(source.url);
       return true;
     })
-    .slice(0, 4);
+    .slice(0, 6);
   const result = {
     sources,
     status: fulfilled.length ? (sources.length ? 'ok' : 'no_results') : 'unavailable'
@@ -283,6 +289,26 @@ function addOnlineContext(modelRequest, sources) {
       'Пайдаланушы сұрағына пайдалы болса, деректерді қолдан және жауапта [1], [2] түрінде дереккөз нөмірін көрсет. ' +
       `Дерек жетіспесе, оны ашық айт.\n\n${context}`
   });
+}
+
+function publicSource({ title, url, provider, year, authors }) {
+  return {
+    title,
+    url,
+    ...(provider ? { provider } : {}),
+    ...(year ? { year } : {}),
+    ...(authors ? { authors } : {})
+  };
+}
+
+function getWebSearchPlugins(task, body) {
+  if (task !== 'chat' || body.deep !== true || body.web !== true) return [];
+  return [{
+    id: 'web',
+    max_results: 3,
+    search_prompt:
+      'Use current web sources when they help answer the question. Cite important claims with Markdown links to the original pages. Do not invent URLs. Answer in the user's language.'
+  }];
 }
 
 let supabaseAdmin;
@@ -555,22 +581,24 @@ function getModelAttempts(task, isStructured, deep, hasImage = false) {
   const attempts = hasImage
     ? [
         { model: VISION_MODEL, timeoutMs: 24_000 },
-        { model: VISION_FALLBACK_MODEL, timeoutMs: 20_000 }
+        { model: VISION_FALLBACK_MODEL, timeoutMs: 16_000 }
       ]
     : isStructured
     ? [
-        { model: STRUCTURED_MODEL, timeoutMs: 28_000 },
-        { model: STRUCTURED_FALLBACK_MODEL, timeoutMs: 20_000 }
+        { model: STRUCTURED_MODEL, timeoutMs: 20_000 },
+        { model: STRUCTURED_FALLBACK_MODEL, timeoutMs: 15_000 },
+        { model: STRUCTURED_LAST_RESORT_MODEL, timeoutMs: 10_000 }
       ]
     : task === 'chat' && deep
       ? [
-          { model: DEEP_MODEL, timeoutMs: 28_000 },
-          { model: DEEP_FALLBACK_MODEL, timeoutMs: 16_000 }
+          { model: DEEP_MODEL, timeoutMs: 20_000 },
+          { model: DEEP_FALLBACK_MODEL, timeoutMs: 15_000 },
+          { model: DEEP_LAST_RESORT_MODEL, timeoutMs: 10_000 }
         ]
       : [
           { model: FAST_MODEL, timeoutMs: 18_000 },
-          { model: FAST_FALLBACK_MODEL, timeoutMs: 18_000 },
-          { model: FAST_LAST_RESORT_MODEL, timeoutMs: 18_000 }
+          { model: FAST_FALLBACK_MODEL, timeoutMs: 15_000 },
+          { model: FAST_LAST_RESORT_MODEL, timeoutMs: 10_000 }
         ];
 
   return attempts.filter(
@@ -592,6 +620,11 @@ async function requestOpenRouter({ task, body, modelRequest, userId }) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const startedAt = Date.now();
+    const plugins = [
+      ...getWebSearchPlugins(task, body),
+      ...(isStructured ? [{ id: 'response-healing' }] : []),
+      ...(hasPdf ? [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }] : [])
+    ];
 
     try {
       const upstream = await fetch(OPENROUTER_URL, {
@@ -613,14 +646,7 @@ async function requestOpenRouter({ task, body, modelRequest, userId }) {
             require_parameters: isStructured,
             sort: 'throughput'
           },
-          ...((isStructured || hasPdf)
-            ? {
-                plugins: [
-                  ...(isStructured ? [{ id: 'response-healing' }] : []),
-                  ...(hasPdf ? [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }] : [])
-                ]
-              }
-            : {}),
+          ...(plugins.length ? { plugins } : {}),
           stream: false
         })
       });
@@ -707,7 +733,7 @@ async function requestOpenRouterStream({ body, modelRequest, userId, res, metada
   const hasImage = attachments.some((attachment) => attachment.kind === 'image');
   const hasPdf = attachments.some((attachment) => attachment.kind === 'pdf');
   const attempts = getModelAttempts('chat', false, body.deep === true, hasImage);
-  const deadline = Date.now() + 52_000;
+  const deadline = Date.now() + 48_000;
   let lastFailure = { kind: 'unavailable', status: 502 };
 
   for (let index = 0; index < attempts.length; index++) {
@@ -716,7 +742,11 @@ async function requestOpenRouterStream({ body, modelRequest, userId, res, metada
     const remainingMs = deadline - Date.now();
     if (remainingMs < 2_000) return { ok: false, ...lastFailure };
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), Math.min(timeoutMs + 12_000, remainingMs));
+    const timeout = setTimeout(() => controller.abort(), Math.min(timeoutMs, remainingMs));
+    const plugins = [
+      ...getWebSearchPlugins('chat', body),
+      ...(hasPdf ? [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }] : [])
+    ];
 
     try {
       const upstream = await fetch(OPENROUTER_URL, {
@@ -734,9 +764,7 @@ async function requestOpenRouterStream({ body, modelRequest, userId, res, metada
           user: userId,
           temperature: 0.45,
           provider: { allow_fallbacks: true, sort: 'throughput' },
-          ...(hasPdf
-            ? { plugins: [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }] }
-            : {}),
+          ...(plugins.length ? { plugins } : {}),
           stream: true
         })
       });
@@ -906,7 +934,7 @@ export default async function handler(req, res) {
         modelMode: req.body?.deep === true ? 'deep' : 'fast',
         ...(req.body?.web === true ? { webStatus: webStatus || 'unavailable' } : {}),
         ...(onlineSources.length
-          ? { sources: onlineSources.map(({ title, url }) => ({ title, url })) }
+          ? { sources: onlineSources.map(publicSource) }
           : {})
       }
     });
@@ -953,7 +981,7 @@ export default async function handler(req, res) {
     modelMode: task === 'chat' && req.body?.deep === true ? 'deep' : 'fast',
     ...(req.body?.web === true ? { webStatus: webStatus || 'unavailable' } : {}),
     ...(onlineSources.length
-      ? { sources: onlineSources.map(({ title, url }) => ({ title, url })) }
+      ? { sources: onlineSources.map(publicSource) }
       : {})
   });
 }

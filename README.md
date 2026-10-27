@@ -1,6 +1,6 @@
 # Smart Helper
 
-AI-помощник для учёбы на казахском и русском языках. Чат с потоковыми ответами принимает фото, PDF и текстовые файлы; планы, карточки и тесты используют бесплатные размещённые open-source модели через OpenRouter — локальный запуск модели не нужен.
+AI-помощник для учёбы на казахском и русском языках. Чат с потоковыми ответами принимает фото, PDF и текстовые файлы; планы, карточки и тесты создаются через OpenRouter. Быстрые запросы используют бесплатные модели, а включаемый пользователем режим «Терең жауап» использует более сильную Gemini 3.8 Flash с резервным переходом на бесплатные модели.
 
 ## Архитектура
 
@@ -9,8 +9,9 @@ AI-помощник для учёбы на казахском и русском 
    │
    └── /api/chat (Vercel Function) ── OpenRouter ── fast/deep + fallback
               │
-              ├── Wikipedia API (опциональные учебные источники)
+              ├── Wikipedia, arXiv и OpenAlex (учебные источники)
               │
+              ├── OpenRouter Web Search (по желанию, для глубоких ответов)
               └── Supabase RPC: атомарные лимиты запросов
 ```
 
@@ -38,6 +39,10 @@ src/
 │   └── responsive.css
 ├── ui/background.js
 └── utils/text.js
+
+api/
+├── chat.js                 # маршрутизация AI-моделей, поток и интернет-поиск
+└── sources.js              # поиск публикаций arXiv и OpenAlex
 ```
 
 ## Настройка Supabase
@@ -67,17 +72,21 @@ src/
 | `OPENROUTER_API_KEY` | Да | Секретный ключ OpenRouter |
 | `OPENROUTER_FAST_MODEL` | Нет | Быстрая бесплатная модель для обычного чата |
 | `OPENROUTER_FAST_FALLBACK_MODEL` | Нет | Запасная модель обычного чата |
+| `OPENROUTER_FAST_LAST_RESORT_MODEL` | Нет | Последний бесплатный резерв обычного чата |
 | `OPENROUTER_DEEP_MODEL` | Нет | Модель режима «Глубокий ответ» |
 | `OPENROUTER_DEEP_FALLBACK_MODEL` | Нет | Запасная модель глубокого режима |
+| `OPENROUTER_DEEP_LAST_RESORT_MODEL` | Нет | Последний резерв глубокого режима |
 | `OPENROUTER_STRUCTURED_MODEL` | Нет | Модель планов, карточек и тестов |
 | `OPENROUTER_STRUCTURED_FALLBACK_MODEL` | Нет | Запасная модель структурированных ответов |
+| `OPENROUTER_STRUCTURED_LAST_RESORT_MODEL` | Нет | Последний резерв структурированных ответов |
 | `OPENROUTER_VISION_MODEL` | Нет | Бесплатная мультимодальная модель для фото |
 | `OPENROUTER_VISION_FALLBACK_MODEL` | Нет | Запасной бесплатный мультимодальный маршрутизатор |
 | `PUBLIC_SITE_URL` | Нет | Адрес сайта на Vercel |
 | `AI_MINUTE_LIMIT` | Нет | По умолчанию 10 запросов в минуту |
 | `AI_DAILY_LIMIT` | Нет | По умолчанию 50 запросов в день |
+| `OPENALEX_API_KEY` | Нет | Повышает лимит научного поиска OpenAlex; arXiv доступен без него |
 
-Код также понимает старые имена `SUPABASE_ANON_KEY` и `SUPABASE_SERVICE_ROLE_KEY`, но для новых проектов рекомендуются publishable/secret keys.
+Режим «Терең жауап» включается отдельно и может расходовать баланс OpenRouter: Gemini 3.8 Flash тарифицируется провайдером за токены. Если включён и поиск в интернете, поиск тоже может тарифицироваться. Обычный режим использует бесплатные модели. Код понимает старые имена `SUPABASE_ANON_KEY` и `SUPABASE_SERVICE_ROLE_KEY`, но для новых проектов рекомендуются publishable/secret keys.
 
 После изменения переменных создайте новый deployment. Не отправляйте `SUPABASE_SECRET_KEY` и `OPENROUTER_API_KEY` в чат и не добавляйте их в Git.
 
@@ -110,7 +119,7 @@ npm run dev
 - Вложения отправляются в AI напрямую и не сохраняются в Supabase; поддерживаются JPEG, PNG, WebP, PDF, TXT, MD и CSV.
 - Planner, flashcard и quiz запрашивают структурированный ответ по JSON Schema.
 - Неуспешные обращения к моделям не расходуют пользовательскую квоту.
-- Режим Wikipedia использует открытый MediaWiki API и явно показывает состояние поиска.
+- Поиск в интернете использует открытый MediaWiki API, arXiv и OpenAlex. В режиме глубокого ответа модель также может искать актуальные страницы в интернете и приводить ссылки.
 - Для контроля расходов задайте spending limit в OpenRouter.
 - JavaScript вынесен в ES-модули, поэтому `unsafe-inline` удалён из `script-src` CSP.
 - В CSS ещё используются отдельные inline-стили разметки, поэтому `style-src` временно сохраняет `unsafe-inline`.
