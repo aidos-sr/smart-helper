@@ -215,6 +215,36 @@
 .streaming-label { color:var(--tx3); }
 .streaming-label::after { content:'…'; color:var(--ac); animation:pulse 1.2s infinite; }
 .message-error .aib { border-color:rgba(255,77,109,.28); background:rgba(255,77,109,.06); }
+
+/* Rich AI answers: headings, lists, code and math */
+.aib p { margin:0 0 8px; }
+.aib p:last-child { margin-bottom:0; }
+.aib h3,.aib h4,.aib h5 {
+  margin:12px 0 6px; color:var(--tx); font-family:'Syne',sans-serif; line-height:1.35;
+}
+.aib h3 { font-size:1.04rem; }
+.aib h4 { font-size:.95rem; }
+.aib h5 { font-size:.88rem; }
+.aib ul,.aib ol { margin:6px 0 10px; padding-left:22px; }
+.aib li { margin:3px 0; }
+.aib li::marker { color:var(--ac); }
+.aib code {
+  background:var(--sf2); padding:2px 6px; border-radius:5px;
+  font-family:'JetBrains Mono',monospace; font-size:.8em;
+}
+.aib pre {
+  background:var(--sf2); border:1px solid var(--bd); padding:11px 13px;
+  border-radius:10px; overflow-x:auto; margin:8px 0;
+}
+.aib pre code { background:none; padding:0; font-size:.78rem; }
+.aib blockquote {
+  margin:8px 0; padding:4px 0 4px 12px;
+  border-left:3px solid var(--ac); color:var(--tx2);
+}
+.aib hr { border:0; border-top:1px solid var(--bd2); margin:12px 0; }
+.aib a { color:var(--ac); text-decoration:underline; }
+.aib .katex { font-size:1.02em; }
+.aib .katex-display { margin:8px 0; overflow-x:auto; overflow-y:hidden; padding:4px 0; }
 .message-attachments { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
 .message-attachments span {
   display:flex; align-items:center; gap:6px; max-width:240px; padding:5px 8px;

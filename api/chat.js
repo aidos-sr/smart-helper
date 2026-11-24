@@ -1,11 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 import { searchStudySources } from '../lib/study-sources.js';
 
-const FAST_MODEL = process.env.OPENROUTER_FAST_MODEL || 'google/gemma-4-26b-a4b-it:free';
+const FAST_MODEL = process.env.OPENROUTER_FAST_MODEL || 'google/gemma-4-31b-it:free';
 const FAST_FALLBACK_MODEL =
-  process.env.OPENROUTER_FAST_FALLBACK_MODEL || 'google/gemma-4-31b-it:free';
+  process.env.OPENROUTER_FAST_FALLBACK_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free';
 const FAST_LAST_RESORT_MODEL =
-  process.env.OPENROUTER_FAST_LAST_RESORT_MODEL || 'openrouter/free';
+  process.env.OPENROUTER_FAST_LAST_RESORT_MODEL || 'dots-studio/dots-3-note-preview:free';
 const DEEP_MODEL =
   process.env.OPENROUTER_DEEP_MODEL || 'google/gemini-3.8-flash';
 const DEEP_FALLBACK_MODEL =
@@ -13,16 +13,16 @@ const DEEP_FALLBACK_MODEL =
   process.env.OPENROUTER_MODEL ||
   'nvidia/nemotron-3-ultra-550b-a55b:free';
 const DEEP_LAST_RESORT_MODEL =
-  process.env.OPENROUTER_DEEP_LAST_RESORT_MODEL || 'openrouter/free';
+  process.env.OPENROUTER_DEEP_LAST_RESORT_MODEL || 'google/gemma-4-31b-it:free';
 const STRUCTURED_MODEL =
   process.env.OPENROUTER_STRUCTURED_MODEL || 'google/gemma-4-31b-it:free';
 const STRUCTURED_FALLBACK_MODEL =
   process.env.OPENROUTER_STRUCTURED_FALLBACK_MODEL || 'google/gemma-4-26b-a4b-it:free';
 const STRUCTURED_LAST_RESORT_MODEL =
-  process.env.OPENROUTER_STRUCTURED_LAST_RESORT_MODEL || 'openrouter/free';
+  process.env.OPENROUTER_STRUCTURED_LAST_RESORT_MODEL || 'nvidia/nemotron-3.5-super-vl:free';
 const VISION_MODEL = process.env.OPENROUTER_VISION_MODEL || 'google/gemma-4-31b-it:free';
 const VISION_FALLBACK_MODEL =
-  process.env.OPENROUTER_VISION_FALLBACK_MODEL || 'openrouter/free';
+  process.env.OPENROUTER_VISION_FALLBACK_MODEL || 'nvidia/nemotron-3.5-super-vl:free';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const WEB_SEARCH_TIMEOUT_MS = 5_000;
 const WEB_CACHE_TTL_MS = 10 * 60_000;
@@ -35,8 +35,27 @@ const RETRYABLE_UPSTREAM_STATUSES = new Set([
   400, 402, 403, 404, 408, 429, 500, 502, 503, 504
 ]);
 
-const CHAT_SYSTEM_PROMPT =
-  'Сен Smart Helper атты оқу көмекшісісің. Қазақ немесе орыс тілінде, пайдаланушы қай тілде сұраса, сол тілде жауап бер. Жауабың түсінікті, дәл, пайдалы және ынталандырушы болсын. Білмесең, ойдан шығармай ашық айт.';
+const CHAT_SYSTEM_PROMPT = `Сен Smart Helper атты оқу көмекшісісің. Оқушыға сабақ, емтихан және үй тапсырмасы бойынша көмектесесің.
+
+ТІЛ:
+- Пайдаланушы соңғы хабарламасы қай тілде болса, сол тілде жауап бер (қазақша сұраса — тек қазақша, орысша сұраса — тек орысша).
+- Бір жауапта екі тілді араластырма. Терминдерді ғана қажет болса қалдыр.
+
+ЖАУАПТЫҢ ҚҰРЫЛЫМЫ:
+- Алдымен сұраққа қысқа, нақты жауап бер, содан кейін түсіндір.
+- Markdown қолдан: қысқа тақырыпшалар (###), тізімдер (-), маңызды жерлерде **қалың** мәтін.
+- Ұзақ бір үйінді мәтін жазба. Әр ойды бөлек абзац немесе тізім тармағы ет.
+- Есеп шығарсаң: «Берілгені», «Шешуі», «Жауабы» деп бөл.
+
+ФОРМУЛАЛАР:
+- Барлық математикалық өрнекті LaTeX форматында жаз: жол ішінде $...$ , бөлек жолда $$...$$.
+- Мысалы: $x^2 + 5x = 0$, $\\frac{a}{b}$, $\\sqrt{16} = 4$, $$S = \\pi r^2$$.
+- Формуланы мәтінмен араластырма: $ белгісін қоймай «x2» деп жазба.
+
+МАЗМҰН:
+- Тек шынайы, тексерілген ақпарат бер. Білмесең немесе сенімсіз болсаң, ашық айт: «Бұл туралы нақты білмеймін».
+- Ойдан дерек, сілтеме немесе дәйексөз құрастырма.
+- Жауап түсінікті, достық, ынталандырушы болсын. Артық кіріспе сөзсіз («Әрине!», «Керемет сұрақ!») жауап бер.`;
 
 const JSON_SCHEMAS = Object.freeze({
   planner: {
@@ -488,7 +507,7 @@ function buildChatRequest(body) {
 
   return {
     messages: [{ role: 'system', content: CHAT_SYSTEM_PROMPT }, ...messages],
-    max_tokens: 1_500
+    max_tokens: 2_000
   };
 }
 

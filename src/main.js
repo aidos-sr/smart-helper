@@ -2,7 +2,8 @@ import { initBackground } from './ui/background.js';
 import { initializeSupabase } from './services/supabase.js';
 import { requestAIStream } from './services/ai.js';
 import { addXP, addStat, loadProgress, renderStats } from './modules/progress.js';
-import { esc, fmtTxt } from './utils/text.js';
+import { esc } from './utils/text.js';
+import { renderRichText, hasMath, onMathReady } from './utils/rich-text.js';
 import { runTool } from './modules/tools.js';
 import { initPlanner, loadSavedPlan, runPlanner } from './modules/planner.js';
 import { createFlashcardsFromText, fcResult, flipCard, genFlashcards, initFlashcards, loadSavedFlashcards, nextCard, setFCSubj } from './modules/flashcards.js';
@@ -403,7 +404,7 @@ async function runAssistantRequest(request, retryKey = crypto.randomUUID()) {
         if (paintScheduled) return;
         paintScheduled = true;
         requestAnimationFrame(() => {
-          bubble.content.innerHTML = fmtTxt(latestText);
+          bubble.content.innerHTML = renderRichText(latestText);
           answerTexts.set(bubble.content.id, latestText);
           msa.scrollTop = msa.scrollHeight;
           paintScheduled = false;
@@ -413,7 +414,12 @@ async function runAssistantRequest(request, retryKey = crypto.randomUUID()) {
     const reply = response.text || latestText;
     const sources = Array.isArray(response.sources) ? response.sources : (streamMeta.sources || []);
     const webStatus = response.webStatus || streamMeta.webStatus || '';
-    bubble.content.innerHTML = fmtTxt(reply);
+    bubble.content.innerHTML = renderRichText(reply);
+    if (hasMath(reply)) {
+      onMathReady(() => {
+        if (bubble.content.isConnected) bubble.content.innerHTML = renderRichText(reply);
+      });
+    }
     answerTexts.set(bubble.content.id, reply);
     bubble.element.classList.remove('streaming');
     bubble.extras.innerHTML = assistantExtras(sources, webStatus);
@@ -476,7 +482,7 @@ function addBubble(text, isUser, sources = [], webStatus = '', options = {}) {
       : `<button class="act-btn" title="Көшіру" aria-label="AI жауабын көшіру" data-action="copy-message" data-message-id="${rid}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
         <button class="study-action" data-action="answer-to-flashcards" data-message-id="${rid}">Карточкалар</button>
         <button class="study-action" data-action="answer-to-quiz" data-message-id="${rid}">Тест</button>`;
-    d.innerHTML = av + `<div class="msg-wrap"><div class="mb aib" id="${rid}">${options.error ? esc(text) : fmtTxt(text)}</div>
+    d.innerHTML = av + `<div class="msg-wrap"><div class="mb aib" id="${rid}">${options.error ? esc(text) : renderRichText(text)}</div>
       <div class="assistant-extras">${assistantExtras(sources, webStatus)}</div>
       <div class="message-actions">
         ${actions}
