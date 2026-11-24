@@ -31,7 +31,9 @@ const MAX_INPUT_CHARS = 12_000;
 const MAX_CHAT_CHARS = 30_000;
 const MAX_ATTACHMENT_DATA_CHARS = 3_500_000;
 const MAX_TEXT_ATTACHMENT_CHARS = 20_000;
-const RETRYABLE_UPSTREAM_STATUSES = new Set([404, 408, 429, 500, 502, 503, 504]);
+const RETRYABLE_UPSTREAM_STATUSES = new Set([
+  400, 402, 403, 404, 408, 429, 500, 502, 503, 504
+]);
 
 const CHAT_SYSTEM_PROMPT =
   'Сен Smart Helper атты оқу көмекшісісің. Қазақ немесе орыс тілінде, пайдаланушы қай тілде сұраса, сол тілде жауап бер. Жауабың түсінікті, дәл, пайдалы және ынталандырушы болсын. Білмесең, ойдан шығармай ашық айт.';
@@ -307,7 +309,7 @@ function getWebSearchPlugins(task, body) {
     id: 'web',
     max_results: 3,
     search_prompt:
-      'Use current web sources when they help answer the question. Cite important claims with Markdown links to the original pages. Do not invent URLs. Answer in the user's language.'
+      "Use current web sources when they help answer the question. Cite important claims with Markdown links to the original pages. Do not invent URLs. Answer in the user's language."
   }];
 }
 
@@ -643,7 +645,7 @@ async function requestOpenRouter({ task, body, modelRequest, userId }) {
           temperature: isStructured ? 0.2 : 0.45,
           provider: {
             allow_fallbacks: true,
-            require_parameters: isStructured,
+            require_parameters: isStructured && hasFallback,
             sort: 'throughput'
           },
           ...(plugins.length ? { plugins } : {}),
@@ -846,6 +848,18 @@ async function requestOpenRouterStream({ body, modelRequest, userId, res, metada
 }
 
 export default async function handler(req, res) {
+  try {
+    return await handleRequest(req, res);
+  } catch (error) {
+    console.error('Unhandled AI function error:', error?.stack || error?.message);
+    if (!res.headersSent) {
+      return json(res, 500, { error: publicAIError('unavailable') });
+    }
+    try { res.end(); } catch {}
+  }
+}
+
+async function handleRequest(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return json(res, 405, { error: 'Тек POST сұрауы қолдау табады' });

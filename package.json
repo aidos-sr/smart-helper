@@ -8,7 +8,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "check": "node --check api/chat.js && node --check api/config.js && node --check api/sources.js && node --check lib/study-sources.js && node --check src/main.js",
+    "build": "npm run check && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

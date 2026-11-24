@@ -34,7 +34,8 @@ tbtn.onclick = () => setTheme(document.documentElement.getAttribute('data-theme'
 /* ═══ ROUTER ═══ */
 function go(page, sub) {
   if (page === 'auth') { showAuth(sub); return; }
-  if (!currentUser) { showAuth(); return; }
+  if (page === 'about') { showAbout(); return; }
+  if (!currentUser) { showAuth('login'); return; }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   document.querySelectorAll('.chatwrap').forEach(p => p.classList.remove('on'));
   if (page === 'chat') {
@@ -51,6 +52,16 @@ function go(page, sub) {
   if (page === 'quiz') initQuiz();
   if (page === 'planner') initPlanner();
   document.querySelector('.nav').classList.remove('hidden');
+}
+
+function showAbout() {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
+  document.querySelectorAll('.chatwrap').forEach(p => p.classList.remove('on'));
+  document.getElementById('pg-about').classList.add('on');
+  document.body.style.overflow = '';
+  document.querySelector('.nav').classList.remove('hidden');
+  document.querySelectorAll('.nb[data-p]').forEach(b => b.classList.remove('on'));
+  window.scrollTo(0, 0);
 }
 
 function showAuth(sub) {
@@ -80,14 +91,14 @@ function applyAuthSession(session) {
     if (!_authReady) go('chat');
   } else {
     clearHistUI();
-    showAuth();
+    if (!_authReady || changed) showAbout();
   }
   _authUserId = nextUserId;
   _authReady = true;
 }
 document.getElementById('loutbtn').onclick = async () => {
   if (supabaseClient) await supabaseClient.auth.signOut();
-  showAuth();
+  showAbout();
 };
 
 /* ═══ AUTH FORMS ═══ */
@@ -577,7 +588,7 @@ document.addEventListener('click', event => {
     'generate-quiz': () => genQuiz(),
     'google-login': () => doGoogle(),
     'login': () => doLogin(),
-    'logo': () => currentUser ? go('chat') : showAuth(),
+    'logo': () => currentUser ? go('chat') : showAbout(),
     'next-card': () => nextCard(),
     'next-quiz-question': () => nextQuizQuestion(),
     'quick-prompt': () => qpu(control),

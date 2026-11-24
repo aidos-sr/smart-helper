@@ -13,7 +13,7 @@
 <canvas id="bg-canvas"></canvas>
 
 <!-- NAV -->
-<nav class="nav hidden">
+<nav class="nav">
   <div class="logo" data-action="logo">
     <div class="logo-icon">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -52,7 +52,7 @@
 </nav>
 
 <!-- ═══════════ ABOUT / LANDING ═══════════ -->
-<div class="page" id="pg-about">
+<div class="page on" id="pg-about">
   <section class="hero">
     <!-- HEX GRID BG -->
     <div class="hero-hex">
@@ -457,7 +457,7 @@
 </div>
 
 <!-- ═══════════ AUTH ═══════════ -->
-<div class="page on" id="pg-auth" style="padding-top:0;min-height:100vh">
+<div class="page" id="pg-auth" style="padding-top:0;min-height:100vh">
   <div class="awrap" style="min-height:100vh;flex-direction:column;gap:0">
     <div style="text-align:center;margin-bottom:36px;animation:fadeUp .5s cubic-bezier(.16,1,.3,1) both">
       <div style="display:inline-flex;align-items:center;justify-content:center;width:60px;height:60px;border-radius:18px;margin-bottom:16px">
@@ -501,6 +501,7 @@
         Google арқылы кіру
       </button>
       <p style="text-align:center;font-size:.73rem;color:var(--tx3);margin-top:18px;line-height:1.6">Кіру арқылы пайдалану шарттарымен<br>келісесіз</p>
+      <button class="nghost" data-go="about" style="display:block;margin:16px auto 0">← Біз туралы бетіне қайту</button>
     </div>
   </div>
 </div>
