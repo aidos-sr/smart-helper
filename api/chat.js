@@ -220,6 +220,61 @@ function normalizeStructuredResult(task, value, body) {
 
 const webCache = new Map();
 
+const SOURCE_STOPWORDS = new Set([
+  'және', 'мен', 'үшін', 'туралы', 'қалай', 'неше', 'қандай', 'қайсы', 'қайда',
+  'кім', 'не', 'бар', 'жоқ', 'деген', 'осы', 'сол', 'бұл', 'маған', 'айт',
+  'the', 'and', 'for', 'with', 'what', 'when', 'where', 'which', 'who', 'why',
+  'how', 'does', 'did', 'was', 'were', 'are', 'is', 'of', 'to', 'in', 'on',
+  'и', 'или', 'что', 'как', 'где', 'когда', 'кто', 'почему', 'зачем', 'это',
+  'для', 'про', 'мне', 'скажи', 'сколько'
+]);
+
+function isCalculationQuery(query) {
+  const text = String(query || '').trim();
+  if (!text) return false;
+  if (/[=<>^√±×÷∑∫]/.test(text)) return true;
+  if (/\b(sin|cos|tan|cot|log|ln|lim|sqrt)\s*[\d(]/i.test(text)) return true;
+  if (/^[\d\s+\-*/().,%]+$/.test(text)) return true;
+  return false;
+}
+
+function relevanceTokens(query) {
+  const seen = new Set();
+  const tokens = [];
+  for (const match of String(query || '').toLowerCase().matchAll(/[\p{L}\p{N}]+/gu)) {
+    const token = match[0];
+    if (token.length < 3) continue;
+    if (SOURCE_STOPWORDS.has(token)) continue;
+    if (seen.has(token)) continue;
+    seen.add(token);
+    tokens.push(token);
+    if (tokens.length >= 10) break;
+  }
+  return tokens;
+}
+
+function matchesToken(haystack, token) {
+  if (/^\d+$/.test(token)) {
+    return new RegExp(`(^|[^\\p{L}\\p{N}])${token}(?=[^\\p{L}\\p{N}]|$)`, 'u').test(haystack);
+  }
+  if (token.length >= 6) return haystack.includes(token.slice(0, 5));
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?=[^\\p{L}\\p{N}]|$)`, 'u').test(haystack);
+}
+
+function isRelevantSource(source, tokens) {
+  if (!tokens.length) return true;
+  const haystack = `${source?.title || ''} ${source?.snippet || ''}`.toLowerCase();
+  const needed = tokens.length === 1 ? 1 : 2;
+  let score = 0;
+  for (const token of tokens) {
+    if (!matchesToken(haystack, token)) continue;
+    score += /^\d+$/.test(token) ? 1 : 2;
+    if (score >= needed) return true;
+  }
+  return false;
+}
+
 function getWikipediaLanguages(query) {
   if (/[әғқңөұүһі]/i.test(query)) return ['kk', 'ru'];
   if (/[а-яё]/i.test(query)) return ['ru'];
@@ -264,6 +319,7 @@ async function searchWikipedia(query, language) {
 async function getOnlineSources(query) {
   const normalizedQuery = asText(query, 500);
   if (!normalizedQuery) return { sources: [], status: 'no_results' };
+  if (isCalculationQuery(normalizedQuery)) return { sources: [], status: 'skipped' };
 
   const cacheKey = normalizedQuery.toLocaleLowerCase();
   const cached = webCache.get(cacheKey);
@@ -276,9 +332,11 @@ async function getOnlineSources(query) {
     )
   ]);
   const fulfilled = searches.filter((result) => result.status === 'fulfilled');
+  const tokens = relevanceTokens(normalizedQuery);
   const seen = new Set();
   const sources = fulfilled
     .flatMap((result) => result.value)
+    .filter((source) => isRelevantSource(source, tokens))
     .filter((source) => {
       if (seen.has(source.url)) return false;
       seen.add(source.url);
