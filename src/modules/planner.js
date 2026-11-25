@@ -1,6 +1,8 @@
-import { requestAI } from '../services/ai.js';
+import { requestAI, studyProgressText } from '../services/ai.js';
 import { addStat, addXP } from './progress.js';
-import { fillMaterialSelect, readSelectedMaterial, saveStudyMaterial } from './library.js';
+import { fillMaterialSelect, readSelectedMaterial, persistStudyMaterial } from './library.js';
+
+let generationVersion = 0;
 
 function setStatus(text, state = '') {
   const status=document.getElementById('planStatus');
@@ -21,26 +23,21 @@ export async function runPlanner() {
   const days=document.getElementById('planDays').value;
   const hours=document.getElementById('planHours').value;
   if (!topic) { setStatus('Тақырып жазыңыз', 'error'); return; }
-  const btn=document.getElementById('planBtn'); btn.disabled=true; btn.textContent='Жасалуда...';
+  const btn=document.getElementById('planBtn');
+  if (btn.disabled) return;
+  const version=++generationVersion;
+  btn.disabled=true; btn.textContent='Жасалуда...';
   const result=document.getElementById('planResult');
   result.innerHTML='<div class="plan-empty"><span class="tloading" style="display:inline-flex">AI жоспар құруда...</span></div>';
   setStatus('1/3 · Сұрау AI-ға жіберілді', 'loading');
   try {
     setStatus('2/3 · AI күндер мен тапсырмаларды құруда', 'loading');
-    const response=await requestAI('planner',{topic,goal,days:Number(days),hours:Number(hours)});
+    const response=await requestAI('planner',{topic,goal,days:Number(days),hours:Number(hours)}, { onProgress: (event) => setStatus(studyProgressText(event), 'loading') });
     const plan=response.data;
     if (!Array.isArray(plan?.days) || !plan.days.length) throw new Error('Жоспар алынбады');
     renderPlan(plan.days, result);
     addStat('plan',1); addXP(20);
-    setStatus('3/3 · Supabase-ке сақталуда', 'loading');
-    try {
-      await saveStudyMaterial('planner', topic, { topic, goal, days: plan.days });
-      await fillMaterialSelect('planSavedSelect', 'planner');
-      setStatus('Дайын және сақталды', 'success');
-    } catch (saveError) {
-      console.warn('Planner save failed', saveError?.code || saveError?.message);
-      setStatus('Дайын, бірақ Supabase-ке сақталмады', 'warning');
-    }
+    persistStudyMaterial('planner', topic, { topic, goal, days: plan.days }, 'planSavedSelect', (text, state) => { if (version === generationVersion) setStatus(text, state); });
   } catch (error) {
     result.textContent=error.message||'Қате орын алды.';
     result.style.color='var(--ac4)'; result.style.padding='16px';

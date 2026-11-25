@@ -1,8 +1,11 @@
-import { requestAI } from '../services/ai.js';
+import { requestAI, studyProgressText } from '../services/ai.js';
 import { addStat, addXP } from './progress.js';
-import { fillMaterialSelect, readSelectedMaterial, saveStudyMaterial } from './library.js';
+import { fillMaterialSelect, readSelectedMaterial, persistStudyMaterial } from './library.js';
 
 let quizQuestions=[], quizCurrent=0, quizScore=0, quizTopic='';
+let quizAnswered=false, quizFinished=false;
+
+let generationVersion = 0;
 
 function setStatus(text, state = '') {
   const status=document.getElementById('quizGenStatus');
@@ -20,24 +23,18 @@ export function initQuiz() {
 async function generateQuiz(topic, count) {
   if(!topic) return false;
   const btn=document.getElementById('quizGenBtn');
+  if (btn.disabled) return false;
+  const version=++generationVersion;
   btn.disabled=true; btn.textContent='Жасалуда...';
   setStatus('1/3 · Сұрау AI-ға жіберілді', 'loading');
   try {
     setStatus('2/3 · AI сұрақтар мен түсіндірмелерді құруда', 'loading');
-    const response=await requestAI('quiz',{topic,count:Number(count)});
+    const response=await requestAI('quiz',{topic,count:Number(count)}, { onProgress: (event) => setStatus(studyProgressText(event), 'loading') });
     const parsed=response.data;
     if(!Array.isArray(parsed?.questions) || !parsed.questions.length) throw new Error('Тест алынбады');
     quizQuestions=parsed.questions; quizCurrent=0; quizScore=0; quizTopic=topic;
     openQuiz();
-    setStatus('3/3 · Supabase-ке сақталуда', 'loading');
-    try {
-      await saveStudyMaterial('quiz', topic, { topic, questions: quizQuestions });
-      await fillMaterialSelect('quizSavedSelect', 'quiz');
-      setStatus('Дайын және сақталды', 'success');
-    } catch (saveError) {
-      console.warn('Quiz save failed', saveError?.code || saveError?.message);
-      setStatus('Дайын, бірақ Supabase-ке сақталмады', 'warning');
-    }
+    persistStudyMaterial('quiz', topic, { topic, questions: quizQuestions }, 'quizSavedSelect', (text, state) => { if (version === generationVersion) setStatus(text, state); });
     return true;
   } catch (error) {
     setStatus(error.message||'Қате орын алды', 'error');
@@ -61,6 +58,7 @@ export async function createQuizFromText(text) {
 }
 
 function openQuiz() {
+  quizAnswered=false; quizFinished=false;
   document.getElementById('quizSetup').style.display='none';
   document.getElementById('quizResult').style.display='none';
   document.getElementById('quizActive').style.display='block';
@@ -69,13 +67,15 @@ function openQuiz() {
 
 function showQuizQ() {
   if(quizCurrent>=quizQuestions.length){showQuizResult();return;}
+  quizAnswered=false;
   const q=quizQuestions[quizCurrent],total=quizQuestions.length;
   document.getElementById('quizNum').textContent=`Сұрақ ${quizCurrent+1} / ${total}`;
   document.getElementById('quizQ').textContent=q.q;
   document.getElementById('quizProgressFill').style.width=((quizCurrent/total)*100)+'%';
   const explanation=document.getElementById('quizExplanation');
-  explanation.hidden=true; explanation.textContent=''; explanation.dataset.result='';
-  document.getElementById('quizNextBtn').hidden=true;
+  explanation.hidden=true; explanation.style.display='none'; explanation.textContent=''; explanation.dataset.result='';
+  const nextButton=document.getElementById('quizNextBtn');
+  nextButton.hidden=true; nextButton.style.display='none';
   const opts=document.getElementById('quizOpts'); opts.innerHTML='';
   ['А','Б','В','Г'].forEach((label,index)=>{
     const btn=document.createElement('button'); btn.className='quiz-opt';
@@ -86,6 +86,8 @@ function showQuizQ() {
 }
 
 function answerQuiz(index) {
+  if (quizAnswered || quizFinished || !quizQuestions[quizCurrent]) return;
+  quizAnswered=true;
   const q=quizQuestions[quizCurrent],btns=document.querySelectorAll('.quiz-opt');
   btns.forEach((button)=>{ button.classList.add('disabled'); button.disabled=true; });
   btns[q.correct]?.classList.add('correct');
@@ -93,20 +95,24 @@ function answerQuiz(index) {
   if(isCorrect){quizScore++;addXP(15);}else{btns[index]?.classList.add('wrong');}
   document.getElementById('quizProgressFill').style.width=((quizCurrent+1)/quizQuestions.length*100)+'%';
   const explanation=document.getElementById('quizExplanation');
-  explanation.hidden=false;
+  explanation.hidden=false; explanation.style.display='';
   explanation.dataset.result=isCorrect?'correct':'wrong';
   explanation.textContent=isCorrect
     ? `Дұрыс! ${q.explanation||''}`.trim()
     : `Неге қате: ${q.explanation||`Дұрыс жауап — ${q.opts[q.correct]}.`}`;
-  document.getElementById('quizNextBtn').hidden=false;
+  const nextButton=document.getElementById('quizNextBtn');
+  nextButton.hidden=false; nextButton.style.display='';
 }
 
 export function nextQuizQuestion() {
+  if (!quizAnswered || quizFinished) return;
   quizCurrent++;
   showQuizQ();
 }
 
 function showQuizResult() {
+  if (quizFinished) return;
+  quizFinished=true;
   document.getElementById('quizActive').style.display='none';
   document.getElementById('quizResult').style.display='block';
   const pct=Math.round(quizScore/quizQuestions.length*100);

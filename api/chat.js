@@ -3,6 +3,7 @@ import { searchStudySources } from '../lib/study-sources.js';
 import { generateChatStream } from '../lib/ai-stream.js';
 import { selectChatHistory, addSearchStatus } from '../lib/chat-context.js';
 import { parseStructuredContent, normalizeStructuredResult } from '../lib/structured-results.js';
+import { generateStudyTask } from '../lib/study-generation.js';
 
 const FAST_MODEL = process.env.OPENROUTER_FAST_MODEL || 'google/gemma-4-31b-it:free';
 const FAST_FALLBACK_MODEL =
@@ -525,7 +526,7 @@ function buildTextToolRequest(task, body) {
       },
       { role: 'user', content: prompts[task] }
     ],
-    max_tokens: task === 'sum' ? 1_000 : 8_000
+    max_tokens: task === 'sum' ? 1_000 : Math.min(8_000, Math.max(800, Math.ceil(input.length * 1.5)))
   };
 }
 
@@ -540,7 +541,7 @@ function structuredFormat(name) {
   };
 }
 
-function buildStructuredRequest(task, body) {
+function buildStructuredRequest(task, body, batch) {
   const topic = asText(body.topic, 8_000);
   if (!topic) throw new Error('EMPTY_INPUT');
 
@@ -553,10 +554,10 @@ function buildStructuredRequest(task, body) {
     format.json_schema.schema.properties.days.maxItems = days;
     return {
       messages: [
-        { role: 'system', content: 'Сен оқушыға шынайы орындалатын, нақты оқу жоспарын жасайтын педагогсің.' },
-        { role: 'user', content: `${days} күндік оқу жоспарын жаса. Тақырып: ${topic}. Мақсат: ${goal}. Күніне: ${hours} сағат.` }
+        { role: 'system', content: 'Сен оқушыға шынайы орындалатын, нақты оқу жоспарын жасайтын педагогсің. Тек JSON қайтар. Қазақша жаз. title 80 таңбадан, tasks 240 таңбадан аспасын. Әр күнге нақты, қысқа тапсырма бер.' },
+        { role: 'user', content: `${batch ? `${batch.total} күндік жоспардың ${batch.start}–${batch.start + batch.size - 1} күндеріне арналған бөлігін жаса. Осы бөлікте дәл ${days} күн болсын; day өрісінде 1-ден ${days}-ге дейінгі жергілікті реттік санды қолдан. Бүкіл жоспар бойынша тақырыпты біртіндеп күрделендір.` : `${days} күндік оқу жоспарын жаса.`} Тақырып: ${topic}. Мақсат: ${goal}. Күніне: ${hours} сағат.` }
       ],
-      max_tokens: Math.min(12_000, 800 + days * 300),
+      max_tokens: Math.min(12_000, 700 + days * 300),
       response_format: format
     };
   }
@@ -564,7 +565,7 @@ function buildStructuredRequest(task, body) {
   if (task === 'flashcards') {
     return {
       messages: [
-        { role: 'system', content: 'Сен есте сақтауға ыңғайлы, қысқа және нақты оқу карточкаларын жасайтын мұғалімсің.' },
+        { role: 'system', content: 'Сен есте сақтауға ыңғайлы, қысқа және нақты оқу карточкаларын жасайтын мұғалімсің. Тек JSON қайтар. Қазақша жаз. Әр сұрақ 160, әр жауап 240 таңбадан аспасын. Қайталанбайтын сұрақтар құрастыр.' },
         { role: 'user', content: `«${topic}» тақырыбы бойынша дәл 6 сұрақ-жауап карточкасын жаса.` }
       ],
       max_tokens: 2_000,
@@ -572,17 +573,33 @@ function buildStructuredRequest(task, body) {
     };
   }
 
-  const count = asBoundedInt(body.count, 3, 15, 5);
+  const count = asBoundedInt(body.count, batch ? 1 : 3, 15, 5);
   const format = structuredFormat('quiz');
   format.json_schema.schema.properties.questions.minItems = count;
   format.json_schema.schema.properties.questions.maxItems = count;
   return {
     messages: [
-      { role: 'system', content: 'Сен бір ғана дұрыс жауабы бар, анық және фактілік оқу тесттерін жасайтын мұғалімсің.' },
-      { role: 'user', content: `«${topic}» тақырыбы бойынша дәл ${count} тест сұрағын жаса. Әр сұрақта 4 жауап нұсқасы және дұрыс жауаптың қысқа, түсінікті түсіндірмесі болсын.` }
+      { role: 'system', content: 'Сен бір ғана дұрыс жауабы бар, анық және фактілік оқу тесттерін жасайтын мұғалімсің. Тек JSON қайтар. Қазақша жаз. q 180, әр opts нұсқасы 100, explanation 240 таңбадан аспасын. correct 0-ден 3-ке дейінгі индекс болсын. Барлық өрісті толтыр.' },
+      { role: 'user', content: `«${topic}» тақырыбы бойынша дәл ${count} тест сұрағын жаса. Әр сұрақта 4 әртүрлі жауап нұсқасы және дұрыс жауаптың қысқа, түсінікті түсіндірмесі болсын.${batch ? ` Бұл ${batch.total} сұрақтың ${batch.start}–${batch.start + count - 1} сұрақтары. Бұрынғы сұрақтарды қайталама: ${JSON.stringify(batch.avoid || [])}` : ''}` }
     ],
     max_tokens: Math.min(10_000, 800 + count * 500),
     response_format: format
+  };
+}
+
+function normalizeStudyBody(task, body) {
+  const boundedText = (value, max) => {
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (text.length > max) throw new Error('INPUT_TOO_LONG');
+    return text;
+  };
+  if (['sum', 'trans', 'fix'].includes(task)) {
+    return { input: boundedText(body.input, MAX_INPUT_CHARS), targetLanguage: asText(body.targetLanguage, 40) };
+  }
+  return {
+    topic: boundedText(body.topic, 8000), goal: boundedText(body.goal, 2000),
+    days: asBoundedInt(body.days, 1, 30, 7), hours: asBoundedInt(body.hours, 1, 8, 2),
+    count: asBoundedInt(body.count, 3, 15, 5)
   };
 }
 
@@ -739,7 +756,7 @@ function publicAIError(kind) {
     busy: 'Тегін AI модельдері бос емес. Бір минуттан кейін қайталап көріңіз.',
     timeout: 'AI жауабы тым ұзақ күттірді. Қайтадан көріңіз.',
     empty: 'AI жауабы бос болды',
-    structured: 'AI құрылымды жауап қайтара алмады',
+    structured: 'Материал толық қалыптаспады. Қайта жасап көріңіз.',
     network: 'AI сервисіне қосылу мүмкін болмады',
     interrupted: 'Байланыс үзілді. Жауаптың сақталған бөлігін жалғастыруға болады.',
     protocol: 'AI толық жауап жібермеді. Қайталап көріңіз.',
@@ -808,6 +825,67 @@ async function requestOpenRouterStream({ body, modelRequest, userId, res, metada
   }
 }
 
+async function handleStudyTask({ req, res, task, body, deadline, user, quota }) {
+  const stream = req.body?.stream === true;
+  const controller = new AbortController();
+  const disconnect = () => { if (!res.writableEnded) controller.abort(); };
+  res.on?.('close', disconnect);
+  let heartbeat;
+  if (stream) {
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    writeStreamEvent(res, { type: 'meta', task });
+    heartbeat = setInterval(() => { if (!res.destroyed && !res.writableEnded) res.write(': keep-alive\n\n'); }, 10_000);
+  }
+  const models = [
+    process.env.OPENROUTER_UTILITY_MODEL || 'google/gemma-4-26b-a4b-it:free',
+    process.env.OPENROUTER_UTILITY_FALLBACK_MODEL || 'google/gemma-4-31b-it:free',
+    ...(JSON_SCHEMAS[task] ? [process.env.OPENROUTER_STRUCTURED_MODEL, process.env.OPENROUTER_STRUCTURED_FALLBACK_MODEL] : [process.env.OPENROUTER_FAST_MODEL]),
+    'openrouter/free'
+  ].filter(Boolean);
+  try {
+    const result = await generateStudyTask({
+      task, body, models, deadline, signal: controller.signal,
+      buildRequest: (body, batch) => JSON_SCHEMAS[task] ? buildStructuredRequest(task, body, batch) : buildTextToolRequest(task, body),
+      onProgress: (event) => { if (stream && !res.destroyed) writeStreamEvent(res, event); },
+      request: (payload, signal) => fetch(OPENROUTER_URL, {
+        method: 'POST', signal,
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': process.env.PUBLIC_SITE_URL || 'https://smart-helper-six.vercel.app',
+          'X-OpenRouter-Title': 'Smart Helper'
+        },
+        body: JSON.stringify({ ...payload, user: user.id })
+      })
+    });
+    const { ok: _ok, ...data } = result;
+    const payload = { ...data, remaining: { minute: quota.minuteRemaining, day: quota.dailyRemaining } };
+    if (res.destroyed) return;
+    if (stream) { writeStreamEvent(res, { type: 'done', ...payload }); return res.end(); }
+    return json(res, 200, payload);
+  } catch (error) {
+    const kind = error.kind || (error.name === 'TimeoutError' ? 'timeout' : controller.signal.aborted ? 'cancelled' : 'unavailable');
+    console.warn('Study generation failed:', task, kind);
+    // Close the browser response first; a slow refund must not become another spinner.
+    if (!res.destroyed) {
+      const message = publicAIError(kind);
+      if (stream) { writeStreamEvent(res, { type: 'error', code: kind, error: message }); res.end(); }
+      else json(res, kind === 'timeout' ? 504 : kind === 'busy' ? 503 : 502, { error: message });
+    }
+    // Refund only this one reservation, even when several internal batches ran.
+    try { await refundQuota(user.id, quota); } catch { console.warn('Study quota refund failed'); }
+    return;
+  } finally {
+    clearInterval(heartbeat);
+    controller.abort();
+    res.off?.('close', disconnect);
+  }
+}
+
 export default async function handler(req, res) {
   try {
     return await handleRequest(req, res);
@@ -821,8 +899,9 @@ export default async function handler(req, res) {
 }
 
 async function handleRequest(req, res) {
-  // Includes authentication and source lookup, leaving time to close SSE before Vercel's 60s limit.
-  const deadline = Date.now() + 52_000;
+  // Long study jobs get their own bounded budget; chat keeps its existing deadline.
+  const task = typeof req.body?.task === 'string' ? req.body.task : 'chat';
+  const deadline = Date.now() + (task === 'chat' ? 52_000 : 165_000);
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return json(res, 405, { error: 'Тек POST сұрауы қолдау табады' });
@@ -850,13 +929,15 @@ async function handleRequest(req, res) {
   }
 
   let modelRequest;
-  const task = typeof req.body?.task === 'string' ? req.body.task : 'chat';
+  let taskBody = req.body || {};
   try {
-    modelRequest = buildModelRequest(req.body || {});
+    if (task !== 'chat') taskBody = { task, ...normalizeStudyBody(task, taskBody) };
+    modelRequest = buildModelRequest(taskBody);
   } catch (error) {
     const messages = {
       EMPTY_MESSAGE: 'Хабарлама енгізіңіз',
       EMPTY_INPUT: 'Мәтін немесе тақырып енгізіңіз',
+      INPUT_TOO_LONG: 'Мәтін тым ұзын. Қысқартып, қайта жіберіңіз.',
       MESSAGE_TOO_LONG: 'Хабарлама 12 000 таңбадан аспауы керек',
       INVALID_ATTACHMENT: 'Файл түрі немесе көлемі дұрыс емес',
       UNKNOWN_TASK: 'Белгісіз AI құралы'
@@ -877,6 +958,10 @@ async function handleRequest(req, res) {
       error: 'Сұрау лимиті аяқталды. Біраздан кейін қайталап көріңіз.',
       limits: { minute: quota.minuteLimit, day: quota.dailyLimit }
     });
+  }
+
+  if (task !== 'chat') {
+    return handleStudyTask({ req, res, task, body: taskBody, deadline, user, quota });
   }
 
   let onlineSources = [];

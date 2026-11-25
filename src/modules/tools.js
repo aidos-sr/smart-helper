@@ -1,4 +1,4 @@
-import { requestAI } from '../services/ai.js';
+import { requestAI, studyProgressText } from '../services/ai.js';
 
 export async function runTool(type, btn) {
   const configs = {
@@ -11,13 +11,14 @@ export async function runTool(type, btn) {
   const inp = document.getElementById(cfg.inId).value.trim();
   const out = document.getElementById(cfg.outId);
   if (!inp) { out.textContent='Мәтін енгізіңіз'; out.classList.add('show'); return; }
+  if (btn?.disabled) return;
   const original = btn?.innerHTML;
   if (btn) btn.disabled = true;
   out.className='tc-result show'; out.innerHTML='<span class="tloading">Өңделуде...</span>';
   try {
     const payload = { input: inp };
     if (type === 'trans') payload.targetLanguage = document.getElementById('transLang').value;
-    const response = await requestAI(type, payload);
+    const response = await requestAI(type, payload, { onProgress: (event) => { out.textContent = studyProgressText(event); } });
     out.textContent = response.text || 'Жауап алынбады';
   } catch (error) {
     out.textContent = error.message || 'Қате орын алды.';

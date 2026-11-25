@@ -1,6 +1,6 @@
-import { requestAI } from '../services/ai.js';
+import { requestAI, studyProgressText } from '../services/ai.js';
 import { addStat, addXP } from './progress.js';
-import { fillMaterialSelect, readSelectedMaterial, saveStudyMaterial } from './library.js';
+import { fillMaterialSelect, readSelectedMaterial, persistStudyMaterial } from './library.js';
 import { shuffleArr } from '../utils/text.js';
 
 const FC_BANK = {
@@ -34,6 +34,8 @@ const FC_BANK = {
 };
 
 let fcCards=[...FC_BANK.math], fcIdx=0, fcSubj='math', fcCorrect=0, fcTotal=0;
+
+let generationVersion = 0;
 
 function setStatus(text, state = '') {
   const status = document.getElementById('fcGenStatus');
@@ -80,26 +82,20 @@ export function nextCard() { fcIdx=(fcIdx+1)%fcCards.length; showCard(); }
 async function generateFlashcards(topic) {
   if (!topic) return false;
   const btn=document.getElementById('fcGenBtn');
+  if (btn.disabled) return false;
+  const version=++generationVersion;
   btn.disabled=true;
   btn.textContent='Жасалуда...';
   setStatus('1/3 · Сұрау AI-ға жіберілді', 'loading');
   try {
     setStatus('2/3 · AI карточкаларды құруда', 'loading');
-    const response=await requestAI('flashcards',{topic});
+    const response=await requestAI('flashcards',{topic}, { onProgress: (event) => setStatus(studyProgressText(event), 'loading') });
     const parsed=response.data;
     if (!Array.isArray(parsed?.cards) || !parsed.cards.length) throw new Error('Карточкалар алынбады');
     fcCards=parsed.cards; fcIdx=0; fcCorrect=0; fcTotal=0;
     showCard();
     document.getElementById('fcGenTopic').value='';
-    setStatus('3/3 · Supabase-ке сақталуда', 'loading');
-    try {
-      await saveStudyMaterial('flashcards', topic, { topic, cards: fcCards });
-      await fillMaterialSelect('fcSavedSelect', 'flashcards');
-      setStatus('Дайын және сақталды', 'success');
-    } catch (saveError) {
-      console.warn('Flashcard save failed', saveError?.code || saveError?.message);
-      setStatus('Дайын, бірақ Supabase-ке сақталмады', 'warning');
-    }
+    persistStudyMaterial('flashcards', topic, { topic, cards: fcCards }, 'fcSavedSelect', (text, state) => { if (version === generationVersion) setStatus(text, state); });
     return true;
   } catch (error) {
     setStatus(error.message||'Қате орын алды', 'error');

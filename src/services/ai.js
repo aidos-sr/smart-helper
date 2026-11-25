@@ -1,5 +1,6 @@
-import { consumeAIStream } from '../../lib/ai-client-stream.js';
+import { createAIClient } from '../../lib/ai-http.js';
 import { getCurrentSession, getCurrentUser, refreshCurrentSession } from './supabase.js';
+export { studyProgressText } from '../../lib/ai-http.js';
 
 function requireAccess(options = {}) {
   const user = getCurrentUser();
@@ -12,51 +13,12 @@ function requireAccess(options = {}) {
   return session.access_token;
 }
 
-export async function requestAI(task, payload = {}, options = {}, mayRetry = true) {
-  const accessToken = requireAccess(options);
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(65_000)]) : AbortSignal.timeout(65_000),
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`
-    },
-    body: JSON.stringify({ ...payload, task })
-  });
+const client = createAIClient({ getAccessToken: requireAccess, refreshSession: refreshCurrentSession });
 
-  if (response.status === 401 && mayRetry) {
-    await refreshCurrentSession();
-    return requestAI(task, payload, options, false);
-  }
-
-  let data = {};
-  try { data = await response.json(); } catch {}
-  if (!response.ok) throw new Error(data.error || 'AI сервисі уақытша қолжетімсіз');
-  return data;
+export function requestAI(task, payload = {}, options = {}) {
+  return client.send(task, payload, { onProgress: options.onProgress }, options);
 }
 
-export async function requestAIStream(payload = {}, handlers = {}, options = {}, mayRetry = true) {
-  const accessToken = requireAccess(options);
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(65_000)]) : AbortSignal.timeout(65_000),
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`
-    },
-    body: JSON.stringify({ ...payload, task: 'chat', stream: true })
-  });
-
-  if (response.status === 401 && mayRetry) {
-    await refreshCurrentSession();
-    return requestAIStream(payload, handlers, options, false);
-  }
-
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || 'AI сервисі уақытша қолжетімсіз');
-  }
-  if (!response.body) throw new Error('AI ағынын оқу мүмкін болмады');
-
-  return consumeAIStream(response.body, handlers, { signal: options.signal });
+export function requestAIStream(payload = {}, handlers = {}, options = {}) {
+  return client.send('chat', payload, handlers, options);
 }
