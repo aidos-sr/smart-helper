@@ -14,6 +14,7 @@ initBackground();
 /* ═══ CONFIG ═══ */
 let supabaseClient = null;
 let currentUser = null;
+let activeChatController = null;
 
 async function initSupabase() {
   supabaseClient = await initializeSupabase(applyAuthSession);
@@ -83,6 +84,7 @@ function applyAuthSession(session) {
   const user = session?.user || null;
   const nextUserId = user?.id || null;
   const changed = nextUserId !== _authUserId;
+  if (changed) activeChatController?.abort();
   currentUser = user;
   document.getElementById('anav').style.display = user ? 'none' : 'flex';
   document.getElementById('unav').style.display = user ? 'flex' : 'none';
@@ -323,7 +325,9 @@ async function prepareAttachment(file) {
   }
   if (['txt', 'md', 'csv'].includes(extension) || ['text/plain', 'text/markdown', 'text/csv'].includes(file.type)) {
     if (file.size > 250 * 1024) throw new Error(`${file.name}: мәтіндік файл 250 КБ-тан үлкен`);
-    return { id: crypto.randomUUID(), name: file.name, kind: 'text', type: file.type || 'text/plain', size: file.size, content: (await readAsText(file)).slice(0, 20000) };
+    const content = await readAsText(file);
+    if (content.length > 20000) throw new Error(`${file.name}: мәтін 20 000 таңбадан аспауы керек`);
+    return { id: crypto.randomUUID(), name: file.name, kind: 'text', type: file.type || 'text/plain', size: file.size, content };
   }
   throw new Error(`${file.name}: бұл файл түрі қолдау таппайды`);
 }
@@ -376,7 +380,7 @@ async function sendMsg() {
   const request = {
     text,
     attachments,
-    messages: msgs.map(({ role, content }) => ({ role, content })),
+    messages: msgs.filter((message) => !message.incomplete).map(({ role, content, attachments }) => ({ role, content, ...(attachments?.length ? { attachments } : {}) })),
     title: msgs[0]?.content || text,
     web: webEnabled,
     deep: deepEnabled
@@ -385,12 +389,59 @@ async function sendMsg() {
 }
 
 async function runAssistantRequest(request, retryKey = crypto.randomUUID()) {
+  const controller = new AbortController();
+  activeChatController = controller;
+  const requestUserId = currentUser?.id;
   chatRequestActive = true; sndbtn.disabled = true;
-  const bubble = addBubble('', false, [], '', { streaming: true });
-  bubble.content.innerHTML = '<span class="streaming-label">AI жауап дайындауда...</span>';
-  let latestText = '';
+  const bubble = addBubble(request.prefix || '', false, [], '', { streaming: true });
+  if (!request.prefix) bubble.content.innerHTML = '<span class="streaming-label">AI жауап дайындауда...</span>';
+  let latestText = request.prefix || '';
   let streamMeta = {};
-  let paintScheduled = false;
+  let paintFrame = null;
+  let lastPaint = 0;
+  const paint = () => {
+    if (performance.now() - lastPaint < 80) { paintFrame = requestAnimationFrame(paint); return; }
+    const atBottom = msa.scrollHeight - msa.scrollTop - msa.clientHeight < 120;
+    bubble.content.innerHTML = renderRichText(latestText);
+    answerTexts.set(bubble.content.id, latestText);
+    if (atBottom) msa.scrollTop = msa.scrollHeight;
+    lastPaint = performance.now();
+    paintFrame = null;
+  };
+  const retainAnswer = (reply, sources, webStatus, incomplete, notice = '') => {
+    bubble.content.innerHTML = renderRichText(reply);
+    if (hasMath(reply)) onMathReady(() => {
+      if (bubble.content.isConnected) bubble.content.innerHTML = renderRichText(reply);
+    });
+    answerTexts.set(bubble.content.id, reply);
+    bubble.element.classList.remove('streaming');
+    bubble.extras.innerHTML = assistantExtras(sources, webStatus);
+    const saved = {
+      role: 'assistant', content: reply,
+      ...(sources.length ? { sources } : {}),
+      ...(webStatus ? { webStatus } : {}),
+      ...(incomplete ? { incomplete: true } : {})
+    };
+    msgs.push(saved);
+    if (incomplete) {
+      const continuation = {
+        ...request, prefix: reply,
+        messages: [
+          ...(request.originalMessages || request.messages),
+          { role: 'assistant', content: reply },
+          { role: 'user', content: 'Continue exactly where the previous answer stopped. Do not repeat it. Keep the same language and finish the original task.' }
+        ],
+        originalMessages: request.originalMessages || request.messages,
+        expectedLastMessage: saved,
+        partialMessage: saved
+      };
+      retryRequests.set(retryKey, continuation);
+      bubble.extras.insertAdjacentHTML('beforeend', `<div class="source-status">${esc(notice || 'Жауап толық аяқталмады.')}</div><button class="retry-btn" data-action="retry-message" data-retry-key="${esc(retryKey)}">Жалғастыру</button>`);
+      // An incomplete answer must not become a test or a set of flashcards.
+      bubble.element.querySelectorAll('.study-action').forEach((button) => { button.disabled = true; });
+    } else retryRequests.delete(retryKey);
+    saveChat(request.title);
+  };
   try {
     const response = await requestAIStream({
       messages: request.messages,
@@ -398,45 +449,38 @@ async function runAssistantRequest(request, retryKey = crypto.randomUUID()) {
       web: request.web,
       deep: request.deep
     }, {
-      onMeta: (meta) => { streamMeta = meta; },
+      onMeta: (meta) => {
+        streamMeta = meta;
+        if (meta.model) {
+          modelBadgeText.title = meta.model;
+          modelBadgeText.textContent = meta.fallback ? 'Резерв AI' : request.deep ? 'Күшті AI · тариф' : 'Жылдам AI';
+        }
+      },
       onDelta: (_delta, fullText) => {
-        latestText = fullText;
-        if (paintScheduled) return;
-        paintScheduled = true;
-        requestAnimationFrame(() => {
-          bubble.content.innerHTML = renderRichText(latestText);
-          answerTexts.set(bubble.content.id, latestText);
-          msa.scrollTop = msa.scrollHeight;
-          paintScheduled = false;
-        });
+        latestText = (request.prefix || '') + fullText;
+        if (paintFrame === null) paintFrame = requestAnimationFrame(paint);
       }
-    }, { onAuthRequired: () => showAuth('login') });
-    const reply = response.text || latestText;
+    }, { signal: controller.signal, onAuthRequired: () => showAuth('login') });
+    if (currentUser?.id !== requestUserId) { bubble.element.remove(); return; }
+    const reply = (request.prefix || '') + response.text;
     const sources = Array.isArray(response.sources) ? response.sources : (streamMeta.sources || []);
-    const webStatus = response.webStatus || streamMeta.webStatus || '';
-    bubble.content.innerHTML = renderRichText(reply);
-    if (hasMath(reply)) {
-      onMathReady(() => {
-        if (bubble.content.isConnected) bubble.content.innerHTML = renderRichText(reply);
-      });
-    }
-    answerTexts.set(bubble.content.id, reply);
-    bubble.element.classList.remove('streaming');
-    bubble.extras.innerHTML = assistantExtras(sources, webStatus);
-    msgs.push({
-      role: 'assistant', content: reply,
-      ...(sources.length ? { sources } : {}),
-      ...(webStatus ? { webStatus } : {})
-    });
-    retryRequests.delete(retryKey);
-    addStat('q'); addXP(10); renderStats();
-    saveChat(request.title);
+    retainAnswer(reply, sources, response.webStatus || streamMeta.webStatus || '', response.incomplete === true);
+    if (!response.incomplete) { addStat('q'); addXP(10); renderStats(); }
   } catch (error) {
-    bubble.element.remove();
-    retryRequests.set(retryKey, request);
-    addBubble(error.message || 'AI сервисі уақытша қолжетімсіз.', false, [], '', { error: true, retryKey });
+    if (controller.signal.aborted || currentUser?.id !== requestUserId) { bubble.element.remove(); return; }
+    if (latestText.trim()) {
+      retainAnswer(latestText, streamMeta.sources || [], streamMeta.webStatus || '', true, error.message);
+    } else {
+      bubble.element.remove();
+      retryRequests.set(retryKey, { ...request, expectedLastMessage: msgs.at(-1) });
+      addBubble(error.message || 'AI сервисі уақытша қолжетімсіз.', false, [], '', { error: true, retryKey });
+    }
   } finally {
-    chatRequestActive = false; sndbtn.disabled = false;
+    if (paintFrame !== null) cancelAnimationFrame(paintFrame);
+    if (activeChatController === controller) {
+      activeChatController = null;
+      chatRequestActive = false; sndbtn.disabled = false;
+    }
   }
 }
 
@@ -450,7 +494,9 @@ function assistantExtras(sources = [], webStatus = '') {
     .join('');
   const webStatusText = {
     no_results: 'Интернеттен сәйкес дерек табылмады',
-    unavailable: 'Интернет көздері уақытша қолжетімсіз'
+    unavailable: 'Интернет көздері уақытша қолжетімсіз',
+    provider: 'Интернеттен іздеу сұралды',
+    skipped: ''
   }[webStatus] || '';
   return `${sourceLinks ? `<div class="source-links"><small>Интернет дереккөздері</small>${sourceLinks}</div>` : ''}${webStatusText ? `<div class="source-status">${esc(webStatusText)}</div>` : ''}`;
 }
@@ -500,6 +546,12 @@ async function retryMessage(control) {
   const key = control.dataset.retryKey;
   const request = retryRequests.get(key);
   if (!request || chatRequestActive) return;
+  if (request.expectedLastMessage !== msgs.at(-1)) {
+    control.textContent = 'Сұрақты жаңа хабарлама ретінде жіберіңіз';
+    control.disabled = true;
+    return;
+  }
+  if (request.partialMessage === msgs.at(-1)) msgs.pop();
   control.closest('.msg')?.remove();
   await runAssistantRequest(request, key);
 }
@@ -544,7 +596,11 @@ async function loadHistory() {
   hist=data||[];
   renderHist();
 }
-function clearHistUI() { hist=[]; renderHist(); }
+function clearHistUI() {
+  hist=[]; chatId=null; msgs=[]; answerTexts.clear(); retryRequests.clear();
+  pendingAttachments=[]; renderPendingAttachments();
+  msa.replaceChildren(mkWelcome()); renderHist();
+}
 function renderHist() {
   const l = document.getElementById('hlist'), e = document.getElementById('hempty');
   l.innerHTML = '';
@@ -556,7 +612,13 @@ function renderHist() {
       if (chatRequestActive) return;
       chatId=ch.id; msgs=ch.messages||[]; answerTexts.clear(); retryRequests.clear();
       pendingAttachments=[]; renderPendingAttachments(); msa.innerHTML='';
-      msgs.forEach(m => addBubble(m.content,m.role==='user',m.sources,m.webStatus,{attachments:m.attachments}));
+      msgs.forEach(m => {
+        const bubble = addBubble(m.content,m.role==='user',m.sources,m.webStatus,{attachments:m.attachments});
+        if (m.incomplete && bubble.extras) {
+          bubble.extras.insertAdjacentHTML('beforeend', '<div class="source-status">Жауап толық аяқталмаған. Қажет болса, сұрақты қайта жіберіңіз.</div>');
+          bubble.element.querySelectorAll('.study-action').forEach((button) => { button.disabled = true; });
+        }
+      });
       hlHist(); document.getElementById('csb').classList.remove('open');
     };
     l.appendChild(d);

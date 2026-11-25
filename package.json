@@ -8,9 +8,10 @@
   },
   "scripts": {
     "dev": "vite",
-    "check": "node --check api/chat.js && node --check api/config.js && node --check api/sources.js && node --check lib/study-sources.js && node --check src/main.js",
+    "check": "node scripts/check.mjs",
     "build": "npm run check && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test tests/*.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.1",

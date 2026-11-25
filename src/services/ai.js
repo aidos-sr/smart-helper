@@ -1,3 +1,4 @@
+import { consumeAIStream } from '../../lib/ai-client-stream.js';
 import { getCurrentSession, getCurrentUser, refreshCurrentSession } from './supabase.js';
 
 function requireAccess(options = {}) {
@@ -15,11 +16,12 @@ export async function requestAI(task, payload = {}, options = {}, mayRetry = tru
   const accessToken = requireAccess(options);
   const response = await fetch('/api/chat', {
     method: 'POST',
+    signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(65_000)]) : AbortSignal.timeout(65_000),
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`
     },
-    body: JSON.stringify({ task, ...payload })
+    body: JSON.stringify({ ...payload, task })
   });
 
   if (response.status === 401 && mayRetry) {
@@ -37,11 +39,12 @@ export async function requestAIStream(payload = {}, handlers = {}, options = {},
   const accessToken = requireAccess(options);
   const response = await fetch('/api/chat', {
     method: 'POST',
+    signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(65_000)]) : AbortSignal.timeout(65_000),
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`
     },
-    body: JSON.stringify({ task: 'chat', stream: true, ...payload })
+    body: JSON.stringify({ ...payload, task: 'chat', stream: true })
   });
 
   if (response.status === 401 && mayRetry) {
@@ -55,47 +58,5 @@ export async function requestAIStream(payload = {}, handlers = {}, options = {},
   }
   if (!response.body) throw new Error('AI ағынын оқу мүмкін болмады');
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let fullText = '';
-  let metadata = {};
-  let completed = false;
-
-  const processBlock = (block) => {
-    const dataText = block
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith('data:'))
-      .map((line) => line.slice(5).trim())
-      .join('\n');
-    if (!dataText) return;
-    let event;
-    try { event = JSON.parse(dataText); } catch { return; }
-    if (event.type === 'meta') {
-      metadata = event;
-      handlers.onMeta?.(event);
-    } else if (event.type === 'delta') {
-      fullText += event.text || '';
-      handlers.onDelta?.(event.text || '', fullText);
-    } else if (event.type === 'done') {
-      completed = true;
-      fullText = event.text || fullText;
-      handlers.onDone?.(fullText, metadata);
-    } else if (event.type === 'error') {
-      throw new Error(event.error || 'AI сервисі уақытша қолжетімсіз');
-    }
-  };
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const blocks = buffer.split(/\r?\n\r?\n/);
-    buffer = blocks.pop() || '';
-    blocks.forEach(processBlock);
-  }
-  if (buffer.trim()) processBlock(buffer);
-  if (!completed && !fullText.trim()) throw new Error('AI жауабы бос болды');
-  if (!completed) handlers.onDone?.(fullText.trim(), metadata);
-  return { text: fullText.trim(), ...metadata };
+  return consumeAIStream(response.body, handlers, { signal: options.signal });
 }
