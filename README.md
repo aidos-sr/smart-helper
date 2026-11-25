@@ -73,7 +73,7 @@ api/
 | `SUPABASE_SECRET_KEY` | Да | Серверный `sb_secret_…` |
 | `OPENROUTER_API_KEY` | Да | Секретный ключ OpenRouter |
 | `OPENROUTER_UTILITY_MODEL` | Нет | Быстрая модель инструментов и учебных материалов; по умолчанию Gemma 4 26B free |
-| `OPENROUTER_UTILITY_FALLBACK_MODEL` | Нет | Резерв учебных материалов; по умолчанию Gemma 4 31B free |
+| `OPENROUTER_UTILITY_FALLBACK_MODEL` | Нет | Резерв учебных материалов другого провайдера; по умолчанию Ling 3.2 Flash free |
 | `OPENROUTER_FAST_MODEL` | Нет | Быстрая бесплатная модель для обычного чата |
 | `OPENROUTER_FAST_FALLBACK_MODEL` | Нет | Запасная модель обычного чата |
 | `OPENROUTER_FAST_LAST_RESORT_MODEL` | Нет | Последний бесплатный резерв обычного чата |

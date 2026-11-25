@@ -827,6 +827,7 @@ async function requestOpenRouterStream({ body, modelRequest, userId, res, metada
 
 async function handleStudyTask({ req, res, task, body, deadline, user, quota }) {
   const stream = req.body?.stream === true;
+  const requestId = crypto.randomUUID();
   const controller = new AbortController();
   const disconnect = () => { if (!res.writableEnded) controller.abort(); };
   res.on?.('close', disconnect);
@@ -837,18 +838,19 @@ async function handleStudyTask({ req, res, task, body, deadline, user, quota }) 
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
-    writeStreamEvent(res, { type: 'meta', task });
+    writeStreamEvent(res, { type: 'meta', task, requestId });
     heartbeat = setInterval(() => { if (!res.destroyed && !res.writableEnded) res.write(': keep-alive\n\n'); }, 10_000);
   }
   const models = [
     process.env.OPENROUTER_UTILITY_MODEL || 'google/gemma-4-26b-a4b-it:free',
-    process.env.OPENROUTER_UTILITY_FALLBACK_MODEL || 'google/gemma-4-31b-it:free',
+    process.env.OPENROUTER_UTILITY_FALLBACK_MODEL || 'inclusionai/ling-3.2-flash:free',
     ...(JSON_SCHEMAS[task] ? [process.env.OPENROUTER_STRUCTURED_MODEL, process.env.OPENROUTER_STRUCTURED_FALLBACK_MODEL] : [process.env.OPENROUTER_FAST_MODEL]),
     'openrouter/free'
   ].filter(Boolean);
   try {
     const result = await generateStudyTask({
       task, body, models, deadline, signal: controller.signal,
+      onAttempt: (event) => console.info('Study AI attempt:', JSON.stringify({ requestId, task, ...event })),
       buildRequest: (body, batch) => JSON_SCHEMAS[task] ? buildStructuredRequest(task, body, batch) : buildTextToolRequest(task, body),
       onProgress: (event) => { if (stream && !res.destroyed) writeStreamEvent(res, event); },
       request: (payload, signal) => fetch(OPENROUTER_URL, {
@@ -869,7 +871,7 @@ async function handleStudyTask({ req, res, task, body, deadline, user, quota }) 
     return json(res, 200, payload);
   } catch (error) {
     const kind = error.kind || (error.name === 'TimeoutError' ? 'timeout' : controller.signal.aborted ? 'cancelled' : 'unavailable');
-    console.warn('Study generation failed:', task, kind);
+    console.warn('Study generation failed:', requestId, task, kind);
     // Close the browser response first; a slow refund must not become another spinner.
     if (!res.destroyed) {
       const message = publicAIError(kind);

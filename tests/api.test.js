@@ -199,3 +199,16 @@ test('oversized tool input is rejected before quota or any provider request', as
   assert.equal(requests.length, 0);
   assert.equal(reservations, 0);
 });
+test('quiz batches complete even when provider connections do not close after finish_reason', async () => {
+  modelResponse = (request) => {
+    const count = getSchema(request).properties.questions.minItems;
+    const start = Number(request.messages.at(-1).content.match(/сұрақтың (\d+)–/)[1]);
+    const text = JSON.stringify({ questions: Array.from({ length: count }, (_, i) => question(start + i)) });
+    const bytes = new TextEncoder().encode(encode({ choices: [{ delta: { content: text }, finish_reason: 'stop' }] }));
+    return new Response(new ReadableStream({ start(controller) { controller.enqueue(bytes); }, cancel() { return new Promise(() => {}); } }), { headers: { 'content-type': 'text/event-stream' } });
+  };
+  const res = await invoke({ task: 'quiz', topic: 'Химия', count: 15, stream: true });
+  assert.equal(events(res).at(-1).type, 'done');
+  assert.equal(events(res).at(-1).data.questions.length, 15);
+  assert.equal(reservations, 1);
+});

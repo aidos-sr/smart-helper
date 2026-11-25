@@ -86,3 +86,46 @@ test('plain text tools retry without unsupported optional reasoning controls', a
   assert.equal(calls.length, 2);
   assert.equal(calls[1].reasoning, undefined);
 });
+test('a valid completed quiz does not time out while upstream cancellation hangs', async () => {
+  const bytes = new TextEncoder().encode(event({ choices: [{ delta: { content: '{"answer":"ok"}' }, finish_reason: null }] }) + event({ choices: [{ delta: {}, finish_reason: 'stop' }] }));
+  const response = new Response(new ReadableStream({
+    start(controller) { controller.enqueue(bytes); },
+    cancel() { return new Promise(() => {}); }
+  }), { headers: { 'content-type': 'text/event-stream' } });
+  const result = await generateUtility(options(async () => response, { models: ['only'], attemptTimeoutMs: 30 }));
+  assert.equal(result.data.answer, 'ok');
+});
+test('a timed-out model is not retried by later quiz batches', async () => {
+  const cooldowns = new Map();
+  const calls = [];
+  const request = async (payload) => {
+    calls.push(payload.model);
+    return payload.model === 'primary'
+      ? new Response(new ReadableStream({}), { headers: { 'content-type': 'text/event-stream' } })
+      : completion('{"answer":"ok"}');
+  };
+  const outcomes = [];
+  await generateUtility(options(request, { cooldowns, firstTokenTimeoutMs: 15, onAttempt: (event) => outcomes.push(event) }));
+  await generateUtility(options(request, { cooldowns, firstTokenTimeoutMs: 15 }));
+  assert.deepEqual(calls, ['primary', 'secondary', 'secondary']);
+  assert.deepEqual(outcomes.map((event) => event.outcome), ['timeout', 'success']);
+});
+test('actual reasoning tokens keep an active quiz generation alive within its total budget', async () => {
+  const encoder = new TextEncoder();
+  const response = new Response(new ReadableStream({ start(controller) {
+    for (const ms of [10, 20, 30]) setTimeout(() => controller.enqueue(encoder.encode(event({ choices: [{ delta: { reasoning: 'activity' } }] }))), ms);
+    setTimeout(() => {
+      controller.enqueue(encoder.encode(event({ choices: [{ delta: { content: '{"answer":"ok"}' }, finish_reason: 'stop' }] })));
+      controller.close();
+    }, 40);
+  } }), { headers: { 'content-type': 'text/event-stream' } });
+  const result = await generateUtility(options(async () => response, { models: ['only'], firstTokenTimeoutMs: 25, idleTimeoutMs: 25, attemptTimeoutMs: 150 }));
+  assert.equal(result.data.answer, 'ok');
+});
+test('a rejected upstream with a stuck cancellation does not block a working fallback', async () => {
+  let calls = 0;
+  const blocked = () => new Response(new ReadableStream({ cancel() { return new Promise(() => {}); } }), { status: 429 });
+  const result = await generateUtility(options(async () => ++calls === 1 ? blocked() : completion('{"answer":"ok"}'), { attemptTimeoutMs: 50 }));
+  assert.equal(result.data.answer, 'ok');
+  assert.equal(calls, 2);
+});

@@ -80,3 +80,17 @@ test('unavailable local storage is reported without throwing away generated mate
 test('the saving timeout includes SDK work before fetch begins', async () => {
   await assert.rejects(withDeadline(() => new Promise(() => {}), { timeoutMs: 20 }), { name: 'TimeoutError' });
 });
+test('completed structured material is returned without waiting for connection cleanup', async () => {
+  const bytes = new TextEncoder().encode(event({ type: 'done', data: { cards } }));
+  const response = sse(new ReadableStream({ start(controller) { controller.enqueue(bytes); }, cancel() { return new Promise(() => {}); } }));
+  const result = await client(async () => response).send('flashcards', {}, {}, { timeoutMs: 50 });
+  assert.equal(result.data.cards.length, 6);
+});
+test('a stalled 401 response cleanup does not block refreshing the session', async () => {
+  let requests = 0, refreshes = 0;
+  const result = await client(async () => ++requests === 1
+    ? new Response(new ReadableStream({ cancel() { return new Promise(() => {}); } }), { status: 401 })
+    : sse(event({ type: 'done', text: 'Done' })), async () => { refreshes++; }).send('fix', { input: 'Text' }, {}, { timeoutMs: 50 });
+  assert.equal(result.text, 'Done');
+  assert.equal(refreshes, 1);
+});
