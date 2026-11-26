@@ -1,4 +1,10 @@
 import {
+  useGemini,
+  geminiModel,
+  hasAIKey,
+  requestAICompletion,
+} from "../lib/ai-provider.js";
+import {
   providerPolicy,
   mayUsePaid,
   pseudonym,
@@ -57,7 +63,6 @@ const VISION_MODEL =
 const VISION_FALLBACK_MODEL =
   process.env.OPENROUTER_VISION_FALLBACK_MODEL ||
   "nvidia/nemotron-3.5-super-vl:free";
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const WEB_SEARCH_TIMEOUT_MS = 5_000;
 const WEB_CACHE_TTL_MS = 10 * 60_000;
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -897,6 +902,7 @@ function buildModelRequest(body) {
 }
 
 function getModelAttempts(task, isStructured, deep, hasImage = false) {
+  if (useGemini()) return [{ model: geminiModel(), timeoutMs: 40_000 }];
   const attempts = hasImage
     ? [
         { model: VISION_MODEL, timeoutMs: 24_000 },
@@ -974,18 +980,8 @@ async function requestOpenRouter({
         { ...modelRequest, model, plugins },
         controller.signal,
         () =>
-          fetch(OPENROUTER_URL, {
-            method: "POST",
-            signal: controller.signal,
-            headers: {
-              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-              "Content-Type": "application/json",
-              "HTTP-Referer":
-                process.env.PUBLIC_SITE_URL ||
-                "https://smart-helper-six.vercel.app",
-              "X-OpenRouter-Title": "Smart Helper",
-            },
-            body: JSON.stringify({
+          requestAICompletion(
+            {
               model,
               ...modelRequest,
               max_tokens: tokenLimit,
@@ -997,8 +993,9 @@ async function requestOpenRouter({
               },
               ...(plugins.length ? { plugins } : {}),
               stream: false,
-            }),
-          }),
+            },
+            controller.signal,
+          ),
         providerContext,
       );
 
@@ -1175,18 +1172,8 @@ async function requestOpenRouterStream({
           },
           signal,
           () =>
-            fetch(OPENROUTER_URL, {
-              method: "POST",
-              signal,
-              headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                "Content-Type": "application/json",
-                "HTTP-Referer":
-                  process.env.PUBLIC_SITE_URL ||
-                  "https://smart-helper-six.vercel.app",
-                "X-OpenRouter-Title": "Smart Helper",
-              },
-              body: JSON.stringify({
+            requestAICompletion(
+              {
                 model,
                 ...modelRequest,
                 messages,
@@ -1200,8 +1187,9 @@ async function requestOpenRouterStream({
                     : []),
                 ],
                 stream: true,
-              }),
-            }),
+              },
+              signal,
+            ),
           providerContext,
         ),
     });
@@ -1289,18 +1277,21 @@ async function handleStudyTask({
       if (!res.destroyed && !res.writableEnded) res.write(": keep-alive\n\n");
     }, 10_000);
   }
-  const models = [
-    process.env.OPENROUTER_UTILITY_MODEL || "google/gemma-4-26b-a4b-it:free",
-    process.env.OPENROUTER_UTILITY_FALLBACK_MODEL ||
-      "inclusionai/ling-3.2-flash:free",
-    ...(JSON_SCHEMAS[task]
-      ? [
-          process.env.OPENROUTER_STRUCTURED_MODEL,
-          process.env.OPENROUTER_STRUCTURED_FALLBACK_MODEL,
-        ]
-      : [process.env.OPENROUTER_FAST_MODEL]),
-    "openrouter/free",
-  ].filter(Boolean);
+  const models = useGemini()
+    ? [geminiModel()]
+    : [
+        process.env.OPENROUTER_UTILITY_MODEL ||
+          "google/gemma-4-26b-a4b-it:free",
+        process.env.OPENROUTER_UTILITY_FALLBACK_MODEL ||
+          "inclusionai/ling-3.2-flash:free",
+        ...(JSON_SCHEMAS[task]
+          ? [
+              process.env.OPENROUTER_STRUCTURED_MODEL,
+              process.env.OPENROUTER_STRUCTURED_FALLBACK_MODEL,
+            ]
+          : [process.env.OPENROUTER_FAST_MODEL]),
+        "openrouter/free",
+      ].filter(Boolean);
   try {
     const result = await generateStudyTask({
       task,
@@ -1352,23 +1343,14 @@ async function handleStudyTask({
           { ...payload, provider: providerPolicy() },
           signal,
           () =>
-            fetch(OPENROUTER_URL, {
-              method: "POST",
-              signal,
-              headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                "Content-Type": "application/json",
-                "HTTP-Referer":
-                  process.env.PUBLIC_SITE_URL ||
-                  "https://smart-helper-six.vercel.app",
-                "X-OpenRouter-Title": "Smart Helper",
-              },
-              body: JSON.stringify({
+            requestAICompletion(
+              {
                 ...payload,
                 provider: providerPolicy(),
                 user: pseudonym(user.id),
-              }),
-            }),
+              },
+              signal,
+            ),
           req.providerContext,
         ),
     });
@@ -1514,8 +1496,13 @@ async function handleRequest(req, res) {
     return json(res, 413, { error: "Сұрау тым үлкен" });
   }
 
-  if (!process.env.OPENROUTER_API_KEY) {
+  if (!hasAIKey()) {
     return json(res, 503, { error: "AI сервисі әлі бапталмаған" });
+  }
+  if (useGemini() && process.env.AI_REQUIRE_ZDR === "true") {
+    return json(res, 503, {
+      error: "AI құпиялылық талаптарына сай бапталмаған",
+    });
   }
 
   let user;

@@ -354,7 +354,7 @@ function setDeepEnabled(enabled) {
   deepbtn.classList.toggle("on", enabled);
   deepbtn.setAttribute("aria-pressed", String(enabled));
   deepbtn.title = enabled
-    ? "Күштірек Gemini 3.8 Flash моделі қолданылады. OpenRouter тарифі, ал веб-іздеу қосымша ақы алуы мүмкін."
+    ? "Терең жауап режимі қосулы. AI және веб-іздеу провайдер тарифіне сай ақы алуы мүмкін."
     : "Жылдам жауап режимі қосулы";
   modelBadgeText.textContent = enabled ? "Күшті AI · тариф" : "Жылдам AI";
 }
