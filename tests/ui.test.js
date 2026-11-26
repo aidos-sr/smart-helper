@@ -55,6 +55,7 @@ let currentId = A,
   aiReply,
   historyReply,
   progressReply,
+  authReply,
   cloudOffline = false,
   upserts = [],
   rpcCalls = [];
@@ -76,6 +77,14 @@ globalThis.fetch = async (input, init = {}) => {
       app_metadata: {},
       user_metadata: {},
     });
+  if (url.includes("/auth/v1/settings"))
+    return json({ external: { google: false, email: true } });
+  if (
+    ["/auth/v1/signup", "/auth/v1/recover", "/auth/v1/resend"].some((path) =>
+      url.includes(path),
+    )
+  )
+    return authReply ? authReply(url, init) : json({});
   if (url.includes("/auth/v1/logout"))
     return new Response(null, { status: 204 });
   if (url.includes("/rpc/merge_progress_events")) {
@@ -480,4 +489,157 @@ test("a failed streamed request refreshes the visible quota with its restored ba
   } finally {
     document.removeEventListener("smart-helper:quota", listener);
   }
+});
+
+test("registration shows an inbox confirmation state and does not send duplicate emails", async () => {
+  const { safeStorage } = await import("../lib/safe-storage.js");
+  safeStorage.removeItem("sh-auth-mail-until:localhost");
+  let sends = 0;
+  authReply = () => {
+    sends++;
+    return Promise.resolve(
+      json({
+        user: {
+          id: B,
+          email: "synthetic@example.org",
+          aud: "authenticated",
+          app_metadata: {},
+          user_metadata: {},
+        },
+        session: null,
+      }),
+    );
+  };
+  document.querySelector('[data-auth-tab="register"]').click();
+  document.getElementById("rN").value = "Synthetic";
+  document.getElementById("rE").value = "synthetic@example.org";
+  document.getElementById("rP").value = "synthetic-password";
+  document
+    .getElementById("fR")
+    .dispatchEvent(
+      new window.Event("submit", { bubbles: true, cancelable: true }),
+    );
+  for (let i = 0; i < 30 && document.getElementById("authConfirm").hidden; i++)
+    await delay();
+  assert.equal(document.getElementById("authConfirm").hidden, false);
+  assert.equal(document.getElementById("fR").hidden, true);
+  assert.equal(document.getElementById("authResend").disabled, true);
+  document.getElementById("authResend").click();
+  await delay();
+  assert.equal(sends, 1);
+  assert.match(
+    document.getElementById("authMailCooldown").textContent,
+    /\d+ с/,
+  );
+  authReply = null;
+});
+test("password reset uses its own email form and a single explicit request", async () => {
+  const { safeStorage } = await import("../lib/safe-storage.js");
+  safeStorage.removeItem("sh-auth-mail-until:localhost");
+  let sends = 0;
+  authReply = (url, init) => {
+    sends++;
+    assert.equal(
+      new URL(url).searchParams.get("redirect_to"),
+      "http://localhost/",
+    );
+    assert.equal(JSON.parse(init.body).email, "synthetic@example.org");
+    return Promise.resolve(json({}));
+  };
+  document.querySelector('[data-auth-tab="login"]').click();
+  document.getElementById("lE").value = "synthetic@example.org";
+  document.getElementById("forgotPassword").click();
+  assert.equal(document.getElementById("resetForm").hidden, false);
+  assert.equal(document.getElementById("fL").hidden, true);
+  assert.equal(document.getElementById("googleBtn").hidden, true);
+  document
+    .getElementById("resetForm")
+    .dispatchEvent(
+      new window.Event("submit", { bubbles: true, cancelable: true }),
+    );
+  for (
+    let i = 0;
+    i < 30 && !document.getElementById("resetNotice").textContent;
+    i++
+  )
+    await delay();
+  assert.equal(sends, 1);
+  assert.equal(document.getElementById("resetBtn").disabled, true);
+  assert.match(
+    document.getElementById("resetNotice").textContent,
+    /Поштаңызды тексеріңіз/,
+  );
+  authReply = null;
+});
+
+test("a late registration confirmation cannot show the previous user email after a session switch", async () => {
+  await switchUser(A);
+  const { safeStorage } = await import("../lib/safe-storage.js");
+  safeStorage.removeItem("sh-auth-mail-until:localhost");
+  let finish;
+  authReply = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  document.querySelector('[data-auth-tab="register"]').click();
+  document.getElementById("rN").value = "Private old user";
+  document.getElementById("rE").value = "old-private@example.org";
+  document.getElementById("rP").value = "synthetic-password";
+  document
+    .getElementById("fR")
+    .dispatchEvent(
+      new window.Event("submit", { bubbles: true, cancelable: true }),
+    );
+  for (let i = 0; i < 30 && !finish; i++) await delay();
+  assert.ok(finish);
+  await switchUser(B);
+  finish(
+    json({
+      user: {
+        id: A,
+        email: "old-private@example.org",
+        aud: "authenticated",
+        app_metadata: {},
+        user_metadata: {},
+      },
+      session: null,
+    }),
+  );
+  await delay();
+  await delay();
+  assert.equal(document.getElementById("authConfirm").hidden, true);
+  assert.equal(document.getElementById("confirmNotice").textContent, "");
+  assert.equal(document.getElementById("rE").value, "");
+  authReply = null;
+});
+test("Google availability matches the backend and disabled provider has a visible explanation", async () => {
+  document.querySelector('[data-auth-tab="login"]').click();
+  for (let i = 0; i < 30 && !document.getElementById("googleBtn").disabled; i++)
+    await delay();
+  assert.equal(document.getElementById("googleBtn").disabled, true);
+  assert.equal(document.getElementById("googleStatus").hidden, false);
+  assert.match(document.getElementById("googleStatus").textContent, /Email/);
+});
+test("mobile navigation and history close through their backdrop or Escape and restore focus", async () => {
+  document.querySelector('[data-go="chat"]').click();
+  document.getElementById("burger").click();
+  await delay();
+  const backdrop = document.querySelector(".menu-backdrop");
+  assert.equal(backdrop.hidden, false);
+  assert.equal(backdrop.dataset.surface, "navigation");
+  backdrop.click();
+  await delay();
+  assert.equal(backdrop.hidden, true);
+  assert.equal(document.activeElement.id, "burger");
+  document.getElementById("mobbtn").click();
+  await delay();
+  assert.equal(backdrop.hidden, false);
+  assert.equal(backdrop.dataset.surface, "history");
+  assert.equal(backdrop.parentElement.id, "pg-chat");
+  document.dispatchEvent(
+    new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+  await delay();
+  assert.equal(backdrop.hidden, true);
+  assert.equal(document.activeElement.id, "mobbtn");
 });

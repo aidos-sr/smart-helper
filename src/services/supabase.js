@@ -8,6 +8,10 @@ let publicAuthConfig = null,
 let currentUser = null,
   subscription = null,
   initializing = null;
+let mailRetryUntil = 0;
+export function getMailRetryAfter() {
+  return Math.max(0, Math.ceil((mailRetryUntil - Date.now()) / 1000));
+}
 
 function requireClient() {
   if (!client) throw new Error("Supabase әлі дайын емес");
@@ -42,6 +46,29 @@ export function initializeSupabase(onSessionChange) {
           config.supabaseUrl,
           config.supabasePublishableKey,
           {
+            global: {
+              fetch: async (url, init = {}) => {
+                const response = await fetch(url, {
+                  ...init,
+                  signal: init.signal
+                    ? AbortSignal.any([init.signal, AbortSignal.timeout(15000)])
+                    : AbortSignal.timeout(15000),
+                });
+                if (
+                  response.status === 429 &&
+                  /\/auth\/v1\/(signup|recover|resend)(\?|$)/.test(String(url))
+                ) {
+                  const hint = response.headers.get("retry-after");
+                  const seconds =
+                    Number(hint) ||
+                    Math.ceil((Date.parse(hint) - Date.now()) / 1000);
+                  if (Number.isFinite(seconds) && seconds > 0)
+                    mailRetryUntil =
+                      Date.now() + Math.min(3600, seconds) * 1000;
+                }
+                return response;
+              },
+            },
             auth: {
               persistSession: true,
               autoRefreshToken: true,
@@ -100,4 +127,43 @@ export async function refreshCurrentSession() {
 
 export function getPublicAuthConfig() {
   return publicAuthConfig;
+}
+
+let availability = null,
+  availabilityRequest = null;
+export function getAuthAvailability({ force = false } = {}) {
+  if (availability && !force) return Promise.resolve(availability);
+  if (availabilityRequest) return availabilityRequest;
+  if (!publicAuthConfig) return Promise.resolve({ google: null, email: null });
+  availabilityRequest = withDeadline(
+    async (signal) => {
+      const response = await fetch(
+        publicAuthConfig.supabaseUrl + "/auth/v1/settings",
+        {
+          signal,
+          cache: "no-store",
+          headers: { apikey: publicAuthConfig.supabasePublishableKey },
+        },
+      );
+      if (!response.ok) throw new Error("AUTH_SETTINGS_UNAVAILABLE");
+      const data = await response.json();
+      availability = {
+        google:
+          typeof data.external?.google === "boolean"
+            ? data.external.google
+            : null,
+        email:
+          typeof data.external?.email === "boolean"
+            ? data.external.email
+            : null,
+      };
+      return availability;
+    },
+    { timeoutMs: 4000 },
+  )
+    .catch(() => ({ google: null, email: null }))
+    .finally(() => {
+      availabilityRequest = null;
+    });
+  return availabilityRequest;
 }
