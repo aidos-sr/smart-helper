@@ -98,7 +98,13 @@ export function initQuiz() {
   });
 }
 
-async function generateQuiz(topic, count, sourceText = "", operationId) {
+async function generateQuiz(
+  topic,
+  count,
+  sourceText = "",
+  operationId,
+  legacyGrade,
+) {
   if (!topic) {
     setStatus("Тақырып жазыңыз", "error");
     document.getElementById("quizTopic").focus();
@@ -133,7 +139,7 @@ async function generateQuiz(topic, count, sourceText = "", operationId) {
       topic,
       count: Number(count),
       sourceText,
-      ...studyOptions(),
+      ...studyOptions(legacyGrade),
     };
     const response = await requestAI("quiz", specification, {
       signal,
@@ -462,10 +468,10 @@ export function resetQuiz() {
   if (quizTopic) document.getElementById("quizTopic").value = quizTopic;
 }
 
-function studyOptions() {
+function studyOptions(legacyGrade) {
   return {
     variant: document.getElementById("studyVariant")?.value || "",
-    grade: document.getElementById("studyGrade")?.value || "",
+    ...(legacyGrade ? { grade: legacyGrade } : {}),
     difficulty: document.getElementById("studyDifficulty")?.value || "medium",
     language: document.getElementById("studyLanguage")?.value || "kk",
   };
@@ -477,5 +483,6 @@ export function resumeQuiz(payload, operationId) {
     payload.count,
     payload.sourceText || "",
     operationId,
+    payload.grade,
   );
 }

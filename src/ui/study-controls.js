@@ -99,12 +99,10 @@ export function createStudyOptions() {
   top.append(title, actions);
   const grid = document.createElement("div");
   grid.className = "study-options__grid";
-  for (const [id, label, type, choices] of [
-    ["studyGrade", "Сынып", "number"],
+  for (const [id, label, choices] of [
     [
       "studyDifficulty",
       "Күрделілік",
-      "select",
       [
         ["easy", "Жеңіл"],
         ["medium", "Орташа"],
@@ -114,7 +112,6 @@ export function createStudyOptions() {
     [
       "studyLanguage",
       "Тіл",
-      "select",
       [
         ["kk", "Қазақша"],
         ["ru", "Русский"],
@@ -126,21 +123,11 @@ export function createStudyOptions() {
     const caption = document.createElement("label");
     caption.htmlFor = id;
     caption.textContent = label;
-    const control = document.createElement(
-      type === "select" ? "select" : "input",
-    );
+    const control = document.createElement("select");
     control.id = id;
-    if (type === "number") {
-      control.type = "number";
-      control.min = "1";
-      control.max = "12";
-      control.placeholder = "1–12";
-      control.inputMode = "numeric";
-    } else {
-      for (const [value, text] of choices)
-        control.append(new Option(text, value));
-      control.value = id === "studyDifficulty" ? "medium" : "kk";
-    }
+    for (const [value, text] of choices)
+      control.append(new Option(text, value));
+    control.value = id === "studyDifficulty" ? "medium" : "kk";
     field.append(caption, control);
     grid.append(field);
   }

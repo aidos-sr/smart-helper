@@ -1,0 +1,18 @@
+@font-face {
+  font-family: "Noto Sans";
+  src: url("./noto-sans-kz.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 300 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Noto Sans Mono";
+  src: url("./noto-sans-mono-kz.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+}
+:root {
+  --font-ui: "Noto Sans", system-ui, sans-serif;
+  --font-code: "Noto Sans Mono", ui-monospace, monospace;
+}

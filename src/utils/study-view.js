@@ -8,7 +8,6 @@ export function studyText(element, text) {
 }
 export function restoreStudyOptions(content) {
   for (const [key, id] of [
-    ["grade", "studyGrade"],
     ["difficulty", "studyDifficulty"],
     ["language", "studyLanguage"],
   ]) {

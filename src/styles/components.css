@@ -3,7 +3,7 @@
 .sec  { padding:88px 0; position:relative; }
 
 .sl {
-  font-family:'JetBrains Mono',monospace;
+  font-family:var(--font-ui);
   font-size:.65rem; color:var(--ac);
   letter-spacing:.15em; text-transform:uppercase;
   margin-bottom:14px;
@@ -12,7 +12,7 @@
 .sl::before { content:''; width:24px; height:1px; background:var(--ac); }
 
 .st {
-  font-family:'Syne', sans-serif;
+  font-family:var(--font-ui);
   font-weight:800; font-size:clamp(1.9rem,3.5vw,2.9rem);
   letter-spacing:-.04em; line-height:1.08;
   margin-bottom:48px; color:var(--tx);
