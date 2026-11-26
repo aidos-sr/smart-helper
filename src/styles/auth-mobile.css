@@ -125,6 +125,41 @@
 .nav-account-summary {
   display: none;
 }
+.quota-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.quota-summary__stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 6px 9px;
+  border: 1px solid var(--study-border);
+  border-radius: 10px;
+  background: var(--sf2);
+  white-space: nowrap;
+}
+.quota-summary__label {
+  color: var(--tx2);
+  font-size: 0.68rem;
+}
+.quota-summary__value {
+  color: var(--study-accent);
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
+}
+.quota-summary__unit {
+  display: none;
+  color: var(--tx2);
+}
+.quota-summary__stat[data-empty="true"] .quota-summary__value {
+  color: var(--study-danger);
+}
+.quota-summary--mobile {
+  display: none;
+}
 .menu-backdrop {
   position: fixed;
   inset: var(--nav) 0 0;
@@ -240,6 +275,40 @@ body.menu-is-open {
   }
   .nact #quotaStatus {
     display: none;
+  }
+  .ctop {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .quota-summary--mobile {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    flex: 1 0 100%;
+    order: 3;
+    gap: 8px;
+  }
+  .quota-summary--mobile .quota-summary__stat {
+    display: flex;
+    flex-wrap: wrap;
+    min-width: 0;
+    gap: 2px 5px;
+    padding: 7px 10px;
+    border-radius: 12px;
+  }
+  .quota-summary--mobile .quota-summary__label {
+    flex-basis: 100%;
+    font-size: 0.72rem;
+  }
+  .quota-summary--mobile .quota-summary__value {
+    font-size: 1rem;
+    line-height: 1.3;
+  }
+  .quota-summary--mobile .quota-summary__unit {
+    display: inline;
+    font-size: 0.75rem;
+  }
+  .cont > .quota-summary--mobile {
+    margin-bottom: 20px;
   }
   .ubadge {
     max-width: 110px;
