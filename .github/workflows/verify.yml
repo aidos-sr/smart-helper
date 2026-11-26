@@ -18,5 +18,10 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+        # Reproduce Vercel's provider environment without real credentials.
+        env:
+          AI_PROVIDER: gemini
+          GEMINI_API_KEY: test-only-not-a-key
+          GEMINI_MODEL: gemini-3.8-flash
       - run: npm audit --audit-level=moderate
       - run: npm audit --omit=dev --audit-level=low
