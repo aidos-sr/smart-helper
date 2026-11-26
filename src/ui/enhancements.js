@@ -61,6 +61,7 @@ export function clearPrivateUI() {
     "chatSaveStatus",
     "attachmentError",
     "quotaStatus",
+    "chatQuotaStatus",
     "appStatus",
     "quizScoreN",
     "quizScoreMsg",
@@ -196,13 +197,69 @@ export function installEnhancements({
   save.id = "chatSaveStatus";
   save.role = "status";
   $("cta").parentElement.after(save);
-  const quota = document.createElement("small");
+  const quota = document.createElement("div");
   quota.id = "quotaStatus";
+  quota.className = "quota-summary";
   quota.role = "status";
+  quota.hidden = true;
   $("unav").after(quota);
+  const mobileQuota = quota.cloneNode(false);
+  mobileQuota.id = "chatQuotaStatus";
+  mobileQuota.classList.add("quota-summary--mobile");
+  document.querySelector(".ctop").append(mobileQuota);
+  const quotaViews = [quota, mobileQuota];
+  for (const page of ["tools", "planner", "flashcard", "quiz"]) {
+    const view = mobileQuota.cloneNode(false);
+    view.id = page + "QuotaStatus";
+    $("pg-" + page)
+      .querySelector(".cont")
+      .prepend(view);
+    quotaViews.push(view);
+  }
+  onSessionReset(() => {
+    for (const node of quotaViews) {
+      node.replaceChildren();
+      node.hidden = true;
+      node.removeAttribute("aria-label");
+    }
+  });
   document.addEventListener("smart-helper:quota", ({ detail }) => {
-    if (detail.remaining)
-      quota.textContent = `Қалды: ${detail.remaining.day} / күн, ${detail.remaining.minute} / минут`;
+    const remaining = detail?.remaining;
+    if (
+      !remaining ||
+      ![remaining.day, remaining.minute].every(
+        (n) => Number.isInteger(n) && n >= 0,
+      )
+    )
+      return;
+    for (const node of quotaViews) {
+      node.replaceChildren();
+      node.setAttribute(
+        "aria-label",
+        `Қалған AI сұраулары: бүгін ${remaining.day}, осы минутта ${remaining.minute}`,
+      );
+      for (const [label, value] of [
+        ["Бүгін қалды", remaining.day],
+        ["Осы минутта", remaining.minute],
+      ]) {
+        const stat = document.createElement("span"),
+          caption = document.createElement("span"),
+          number = document.createElement("strong"),
+          unit = document.createElement("span");
+        stat.className = "quota-summary__stat";
+        stat.dataset.empty = String(value === 0);
+        caption.className = "quota-summary__label";
+        caption.textContent = label + ": ";
+        number.className = "quota-summary__value";
+        number.textContent = String(value);
+        unit.className = "quota-summary__unit";
+        unit.textContent = " сұрау";
+        stat.append(caption, number, unit);
+        if (node.childNodes.length) node.append(" ");
+        node.append(stat);
+      }
+      node.hidden = false;
+    }
   });
   $("hlist").after(button("Келесі 20 чат", loadHistory));
   const profile = document.createElement("div");
