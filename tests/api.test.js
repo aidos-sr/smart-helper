@@ -770,3 +770,67 @@ test("resuming a partial quiz reuses checked questions and generates only the mi
   assert.equal(events(result).at(-1).data.questions.length, 10);
   assert.equal(requests.length, 1);
 });
+
+test("Gemini handles chat and study tools without an OpenRouter key", async () => {
+  const oldKey = process.env.OPENROUTER_API_KEY;
+  const originalMock = globalThis.fetch;
+  const native = [];
+  process.env.AI_PROVIDER = "gemini";
+  process.env.GEMINI_API_KEY = "test-gemini-key";
+  delete process.env.OPENROUTER_API_KEY;
+  globalThis.fetch = async (url, init) => {
+    if (!String(url).startsWith("https://generativelanguage.googleapis.com/"))
+      return originalMock(url, init);
+    native.push(JSON.parse(init.body));
+    const text =
+      native.at(-1).generationConfig.responseMimeType === "application/json"
+        ? JSON.stringify({
+            questions: Array.from({ length: 5 }, (_, i) => question(i)),
+          })
+        : "Gemini response";
+    const data = {
+      candidates: [
+        {
+          content: { parts: [{ text }] },
+          finishReason: "STOP",
+        },
+      ],
+    };
+    return new Response(`data: ${JSON.stringify(data)}\n\n`, {
+      headers: { "content-type": "text/event-stream" },
+    });
+  };
+  try {
+    const result = await invoke(chat);
+    assert.ok(
+      events(result).some(
+        (e) => e.type === "done" && e.text === "Gemini response",
+      ),
+    );
+    const tool = await invoke({
+      task: "fix",
+      input: "Some text",
+      stream: true,
+    });
+    assert.ok(events(tool).some((e) => e.type === "done"));
+    const quiz = await invoke({
+      task: "quiz",
+      topic: "Logic",
+      count: 5,
+      stream: true,
+    });
+    assert.equal(events(quiz).at(-1).type, "done");
+    assert.equal(events(quiz).at(-1).data.questions.length, 5);
+    assert.equal(native.length, 3);
+    assert.ok(native.every((p) => !p.provider && !p.user));
+    assert.equal(requests.length, 0);
+    process.env.AI_REQUIRE_ZDR = "true";
+    assert.equal((await invoke(chat)).statusCode, 503);
+    assert.equal(native.length, 3);
+  } finally {
+    process.env.OPENROUTER_API_KEY = oldKey;
+    delete process.env.AI_PROVIDER;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.AI_REQUIRE_ZDR;
+  }
+});
