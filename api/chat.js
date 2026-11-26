@@ -17,7 +17,17 @@ import {
   parseStructuredContent,
   normalizeStructuredResult,
 } from "../lib/structured-results.js";
-import { generateStudyTask } from "../lib/study-generation.js";
+import {
+  generateStudyTask,
+  remainingStudyCalls,
+} from "../lib/study-generation.js";
+import { withDeadline } from "../lib/deadline.js";
+import {
+  checkProviderCooldown,
+  createAttemptBudget,
+  providerError,
+  responseError,
+} from "../lib/provider-errors.js";
 
 const FAST_MODEL =
   process.env.OPENROUTER_FAST_MODEL || "google/gemma-4-31b-it:free";
@@ -54,9 +64,6 @@ const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_INPUT_CHARS = 12_000;
 const MAX_ATTACHMENT_DATA_CHARS = 3_500_000;
 const MAX_TEXT_ATTACHMENT_CHARS = 20_000;
-const RETRYABLE_UPSTREAM_STATUSES = new Set([
-  400, 402, 403, 404, 408, 422, 429, 500, 502, 503, 504,
-]);
 
 const CHAT_SYSTEM_PROMPT = `Сен Smart Helper атты оқу көмекшісісің. Оқушыға сабақ, емтихан және үй тапсырмасы бойынша көмектесесің.
 
@@ -506,46 +513,124 @@ async function consumeQuota(uid) {
 
 async function refundQuota(uid, reservation) {
   if (!reservation?.allowed) return;
-  const admin = getSupabaseAdmin();
+  if (reservation.refunded) return reservation.refunded;
+  if (reservation.refundPromise) return reservation.refundPromise;
+  reservation.refundPromise = withDeadline(
+    async (signal) => {
+      const admin = getSupabaseAdmin();
 
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { data: usage, error: readError } = await admin
-      .from("ai_usage")
-      .select("day_key,day_count,minute_key,minute_count")
-      .eq("user_id", uid)
-      .maybeSingle();
-    if (readError) throw readError;
-    if (!usage) return;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { data: usage, error: readError } = await admin
+          .from("ai_usage")
+          .select("day_key,day_count,minute_key,minute_count")
+          .eq("user_id", uid)
+          .abortSignal(signal)
+          .maybeSingle();
+        if (readError) throw readError;
+        if (!usage) return;
 
-    const sameDay = usage.day_key === reservation.reservationDay;
-    const sameMinute =
-      Number(usage.minute_key) === reservation.reservationMinute;
-    if (!sameDay && !sameMinute) return;
+        const sameDay = usage.day_key === reservation.reservationDay;
+        const sameMinute =
+          Number(usage.minute_key) === reservation.reservationMinute;
+        if (!sameDay && !sameMinute) return;
 
-    const nextDayCount = sameDay
-      ? Math.max(0, Number(usage.day_count) - 1)
-      : Number(usage.day_count);
-    const nextMinuteCount = Number(usage.minute_count); // All attempts retain their anti-spam count.
+        const nextDayCount = sameDay
+          ? Math.max(0, Number(usage.day_count) - 1)
+          : Number(usage.day_count);
+        // ai_control retains the separate anti-spam/provider-attempt counters.
+        const nextMinuteCount = sameMinute
+          ? Math.max(0, Number(usage.minute_count) - 1)
+          : Number(usage.minute_count);
 
-    const { data: updated, error: updateError } = await admin
-      .from("ai_usage")
-      .update({
-        day_count: nextDayCount,
-        minute_count: nextMinuteCount,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("user_id", uid)
-      .eq("day_key", usage.day_key)
-      .eq("day_count", usage.day_count)
-      .eq("minute_key", usage.minute_key)
-      .eq("minute_count", usage.minute_count)
-      .select("user_id")
-      .maybeSingle();
-    if (updateError) throw updateError;
-    if (updated) return;
+        const { data: updated, error: updateError } = await admin
+          .from("ai_usage")
+          .update({
+            day_count: nextDayCount,
+            minute_count: nextMinuteCount,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("user_id", uid)
+          .eq("day_key", usage.day_key)
+          .eq("day_count", usage.day_count)
+          .eq("minute_key", usage.minute_key)
+          .eq("minute_count", usage.minute_count)
+          .abortSignal(signal)
+          .select("user_id")
+          .maybeSingle();
+        if (updateError) throw updateError;
+        if (updated) {
+          reservation.refunded = {
+            day: Math.max(0, reservation.dailyLimit - nextDayCount),
+            minute: Math.max(0, reservation.minuteLimit - nextMinuteCount),
+          };
+          return reservation.refunded;
+        }
+      }
+
+      throw new Error("Quota refund conflicted too many times");
+    },
+    { timeoutMs: 5000 },
+  );
+  return reservation.refundPromise;
+}
+
+async function settleJob(req, res, result) {
+  if (result) res.aiResult = result;
+  if (!req.jobId || res.jobSettled) return;
+  try {
+    await withDeadline(
+      (signal) =>
+        checkpoint(
+          getSupabaseAdmin(),
+          req.jobUserId,
+          req.jobId,
+          {
+            status: res.aiResult ? "complete" : "partial",
+            ...(res.aiResult ? { result: res.aiResult } : {}),
+            lease_until: new Date().toISOString(),
+          },
+          signal,
+        ),
+      { timeoutMs: 4000 },
+    );
+    res.jobSettled = true;
+  } catch {
+    console.warn("Job checkpoint failed", res.requestId);
   }
+}
 
-  throw new Error("Quota refund conflicted too many times");
+async function refundFailedRequest(req) {
+  try {
+    return await refundQuota(req.jobUserId, req.quotaReservation);
+  } catch {
+    console.warn("AI quota refund failed", req.jobId);
+  }
+}
+
+async function rememberProviderFailure(error, model, context) {
+  const key = error.cooldownKey || model;
+  const seconds = error.cooldownKey
+    ? error.retryAfter
+    : error.modelCooldown || (error.kind === "timeout" ? 30 : 0);
+  if (!key || !seconds) return;
+  const until = Date.now() + seconds * 1000;
+  context.cooldowns.set(key, until);
+  try {
+    await withDeadline(
+      (signal) =>
+        getSupabaseAdmin()
+          .from("ai_model_health")
+          .upsert({
+            model: key,
+            cooldown_until: new Date(until).toISOString(),
+            reason: error.kind || "unavailable",
+          })
+          .abortSignal(signal),
+      { timeoutMs: 2000 },
+    );
+  } catch {
+    console.warn("AI cooldown persistence failed");
+  }
 }
 
 function normalizeAttachments(value) {
@@ -846,6 +931,7 @@ async function requestOpenRouter({
   body,
   modelRequest,
   userId,
+  providerContext,
   deadline = Date.now() + 52_000,
 }) {
   const isStructured = Boolean(modelRequest.response_format);
@@ -913,27 +999,13 @@ async function requestOpenRouter({
               stream: false,
             }),
           }),
+        providerContext,
       );
 
       const data = await upstream.json().catch(() => ({}));
       if (!upstream.ok || data.error) {
-        const status = upstream.ok
-          ? Number(data.error?.code) || 502
-          : upstream.status;
-        console.error(
-          "OpenRouter request failed:",
-          model,
-          upstream.status,
-          data.error?.code,
-        );
-        lastFailure = {
-          kind: status === 429 ? "busy" : "unavailable",
-          status,
-        };
-        if (hasFallback && RETRYABLE_UPSTREAM_STATUSES.has(status)) continue;
-        return { ok: false, ...lastFailure };
+        throw providerError(data, upstream.status, upstream.headers);
       }
-
       const finishReason = data.choices?.[0]?.finish_reason;
       if (finishReason !== "stop") {
         lastFailure = {
@@ -988,12 +1060,20 @@ async function requestOpenRouter({
         error?.name || error?.message,
       );
       lastFailure = {
-        kind: isTimeout ? "timeout" : "network",
-        status: isTimeout ? 504 : 502,
+        kind: isTimeout ? "timeout" : error.kind || "network",
+        status: error.status || (isTimeout ? 504 : 502),
+        retryAfter: error.retryAfter,
       };
-      if (!hasFallback) return { ok: false, ...lastFailure };
+      await rememberProviderFailure(
+        { ...error, kind: lastFailure.kind },
+        model,
+        providerContext,
+      );
+      if (!hasFallback || error.stopRetries)
+        return { ok: false, ...lastFailure };
     } finally {
       clearTimeout(timeout);
+      controller.abort();
     }
   }
 
@@ -1005,6 +1085,9 @@ function publicAIError(kind) {
     {
       busy: "AI-дың ортақ лимиті уақытша аяқталды. Кейін қайталап көріңіз.",
       budget: "Жобаның күндік AI бюджеті аяқталды. Операторға хабарласыңыз.",
+      configuration: "AI кілтін тексеру қажет. Операторға хабарласыңыз.",
+      attempts:
+        "Артық сұрау жіберілмеді. Дайын бөліктер сақталды — «Жалғастыру» батырмасын пайдаланыңыз.",
       timeout: "AI жауабы тым ұзақ күттірді. Қайтадан көріңіз.",
       empty: "AI жауабы бос болды",
       structured: "Материал толық қалыптаспады. Қайта жасап көріңіз.",
@@ -1029,13 +1112,20 @@ function writeStreamEvent(res, payload) {
 }
 
 async function requestOpenRouterStream({
+  req,
   body,
   modelRequest,
   userId,
   res,
   metadata,
   deadline,
+  providerContext,
 }) {
+  if (res.destroyed) {
+    await refundFailedRequest(req);
+    await settleJob(req, res);
+    return { ok: false, kind: "cancelled", streamStarted: true };
+  }
   const attachments = normalizeAttachments(body.attachments);
   const hasImage = attachments.some(
     (attachment) => attachment.kind === "image",
@@ -1046,8 +1136,6 @@ async function requestOpenRouterStream({
     if (!res.writableEnded) controller.abort();
   };
   res.on?.("close", disconnect);
-  if (res.destroyed)
-    return { ok: false, kind: "cancelled", streamStarted: true };
   res.statusCode = 200;
   if (!res.headersSent) {
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -1065,6 +1153,9 @@ async function requestOpenRouterStream({
       modelRequest,
       deadline,
       signal: controller.signal,
+      cooldowns: providerContext.cooldowns,
+      onFailure: (error, model) =>
+        rememberProviderFailure(error, model, providerContext),
       firstTokenTimeoutMs:
         body.deep === true ? 20_000 : hasImage || hasPdf ? 18_000 : 12_000,
       onEvent: (event) => {
@@ -1111,32 +1202,42 @@ async function requestOpenRouterStream({
                 stream: true,
               }),
             }),
+          providerContext,
         ),
     });
+    const remaining = result.ok
+      ? metadata.remaining
+      : await refundFailedRequest(req);
+    const terminal = result.ok
+      ? {
+          type: "done",
+          text: result.text,
+          finishReason: result.finishReason,
+          incomplete: result.incomplete,
+          model: result.model,
+          remaining,
+          ...(body.deep === true && body.web === true
+            ? {
+                sources: result.sources,
+                webStatus: result.sources.length ? "ok" : "no_results",
+              }
+            : {}),
+        }
+      : {
+          type: "error",
+          code: result.kind,
+          error: publicAIError(result.kind),
+          partialText: result.text,
+          retryAfter: result.retryAfter,
+          remaining,
+        };
+    await settleJob(
+      req,
+      res,
+      result.ok ? { ...metadata, ...terminal } : undefined,
+    );
     if (!res.destroyed) {
-      writeStreamEvent(
-        res,
-        result.ok
-          ? {
-              type: "done",
-              text: result.text,
-              finishReason: result.finishReason,
-              incomplete: result.incomplete,
-              model: result.model,
-              ...(body.deep === true && body.web === true
-                ? {
-                    sources: result.sources,
-                    webStatus: result.sources.length ? "ok" : "no_results",
-                  }
-                : {}),
-            }
-          : {
-              type: "error",
-              code: result.kind,
-              error: publicAIError(result.kind),
-              partialText: result.text,
-            },
-      );
+      writeStreamEvent(res, terminal);
       res.end();
     }
     return { ...result, streamStarted: true };
@@ -1156,6 +1257,11 @@ async function handleStudyTask({
   user,
   quota,
 }) {
+  if (res.destroyed) {
+    await refundFailedRequest(req);
+    await settleJob(req, res);
+    return;
+  }
   const stream = req.body?.stream === true;
   const requestId = res.requestId;
   const controller = new AbortController();
@@ -1204,7 +1310,7 @@ async function handleStudyTask({
       signal: controller.signal,
       resumeParts: req.jobParts || [],
       useOutline: true,
-      cooldowns: await modelCooldowns(),
+      cooldowns: req.providerContext.cooldowns,
       onCheckpoint: (parts) => {
         checkpointQueue = checkpointQueue.then(() =>
           checkpoint(getSupabaseAdmin(), user.id, req.jobId, { parts }),
@@ -1216,17 +1322,21 @@ async function handleStudyTask({
           "Study AI attempt:",
           JSON.stringify({ requestId, task, ...event }),
         );
-        if (["timeout", "busy", "unavailable"].includes(event.outcome))
+        if (
+          [
+            "timeout",
+            "busy",
+            "unavailable",
+            "budget",
+            "configuration",
+          ].includes(event.outcome)
+        )
           healthWrites.push(
-            getSupabaseAdmin()
-              .from("ai_model_health")
-              .upsert({
-                model: event.model,
-                cooldown_until: new Date(Date.now() + 30000).toISOString(),
-                reason: event.outcome,
-              })
-              .then(() => {})
-              .catch(() => {}),
+            rememberProviderFailure(
+              { ...event, kind: event.outcome },
+              event.model,
+              req.providerContext,
+            ),
           );
       },
       buildRequest: (body, batch) =>
@@ -1259,6 +1369,7 @@ async function handleStudyTask({
                 user: pseudonym(user.id),
               }),
             }),
+          req.providerContext,
         ),
     });
     const { ok: _ok, ...data } = result;
@@ -1268,6 +1379,8 @@ async function handleStudyTask({
       requestId,
       remaining: { minute: quota.minuteRemaining, day: quota.dailyRemaining },
     };
+    await Promise.allSettled(healthWrites);
+    await settleJob(req, res, payload);
     if (res.destroyed) return;
     if (stream) {
       writeStreamEvent(res, { type: "done", ...payload });
@@ -1283,22 +1396,30 @@ async function handleStudyTask({
           ? "cancelled"
           : "unavailable");
     console.warn("Study generation failed:", requestId, task, kind);
-    // Close the browser response first; a slow refund must not become another spinner.
+    // Settle before the terminal event: serverless runtimes can stop after res.end().
+    const remaining = await refundFailedRequest(req);
+    await Promise.allSettled(healthWrites);
+    await settleJob(req, res);
     if (!res.destroyed) {
       const message = publicAIError(kind);
       if (stream) {
-        writeStreamEvent(res, { type: "error", code: kind, error: message });
+        writeStreamEvent(res, {
+          type: "error",
+          code: kind,
+          error: message,
+          retryAfter: error.retryAfter,
+          remaining,
+        });
         res.end();
-      } else
+      } else {
+        if (error.retryAfter)
+          res.setHeader("Retry-After", String(error.retryAfter));
         json(res, kind === "timeout" ? 504 : kind === "busy" ? 503 : 502, {
           error: message,
+          retryAfter: error.retryAfter,
+          remaining,
         });
-    }
-    // Refund only this one reservation, even when several internal batches ran.
-    try {
-      await refundQuota(user.id, quota);
-    } catch {
-      console.warn("Study quota refund failed");
+      }
     }
     return;
   } finally {
@@ -1319,23 +1440,22 @@ export default async function handler(req, res) {
     return await handleRequest(req, res);
   } catch (error) {
     console.error("Unhandled AI function error:", error?.name, error?.code);
+    const remaining = await refundFailedRequest(req);
+    await settleJob(req, res);
     if (!res.headersSent) {
-      return json(res, 500, { error: publicAIError("unavailable") });
+      return json(res, 500, { error: publicAIError("unavailable"), remaining });
     }
     try {
+      if (!res.destroyed && !res.writableEnded)
+        writeStreamEvent(res, {
+          type: "error",
+          error: publicAIError("unavailable"),
+          remaining,
+        });
       res.end();
     } catch {}
   } finally {
-    if (req.jobId)
-      try {
-        await checkpoint(getSupabaseAdmin(), req.jobUserId, req.jobId, {
-          status: res.aiResult ? "complete" : "partial",
-          ...(res.aiResult ? { result: res.aiResult } : {}),
-          lease_until: new Date().toISOString(),
-        });
-      } catch {
-        console.warn("Job checkpoint failed", res.requestId);
-      }
+    await settleJob(req, res);
     console.info(
       "AI request metric",
       JSON.stringify({
@@ -1353,7 +1473,7 @@ export default async function handler(req, res) {
 async function handleRequest(req, res) {
   // Long study jobs get their own bounded budget; chat keeps its existing deadline.
   const task = typeof req.body?.task === "string" ? req.body.task : "chat";
-  const deadline = Date.now() + (task === "chat" ? 52_000 : 165_000);
+  const deadline = Date.now() + (task === "chat" ? 52_000 : 155_000);
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return json(res, 405, { error: "Тек POST сұрауы қолдау табады" });
@@ -1453,7 +1573,6 @@ async function handleRequest(req, res) {
   }
 
   try {
-    await reserveAttempt(getSupabaseAdmin(), user.id);
     const operationId = req.body.operationId || crypto.randomUUID();
     if (!/^[0-9a-f-]{36}$/i.test(operationId))
       return json(res, 400, { error: "Операция коды дұрыс емес" });
@@ -1481,7 +1600,10 @@ async function handleRequest(req, res) {
     req.jobId = operationId;
     req.jobUserId = user.id;
     req.jobParts = job.parts;
+    // Cached/busy operations never spend an incoming AI-attempt reservation.
+    await reserveAttempt(getSupabaseAdmin(), user.id);
   } catch (error) {
+    await settleJob(req, res);
     res.setHeader("Retry-After", String(error.retryAfter || 60));
     return json(res, error.status || 503, {
       error: "Ортақ AI ресурсы уақытша қолжетімсіз. Кейін қайталаңыз.",
@@ -1496,10 +1618,12 @@ async function handleRequest(req, res) {
     res.timings.quotaMs = Date.now() - quotaStarted;
   } catch (error) {
     console.error("Rate limit storage failed:", error?.code || error?.message);
+    await settleJob(req, res);
     return json(res, 503, { error: "Сұрау лимитін тексеру мүмкін болмады" });
   }
 
   if (!quota.allowed) {
+    await settleJob(req, res);
     const resetAt =
       quota.dailyRemaining === 0
         ? Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z") +
@@ -1516,6 +1640,22 @@ async function handleRequest(req, res) {
       limits: { minute: quota.minuteLimit, day: quota.dailyLimit },
     });
   }
+
+  req.quotaReservation = quota;
+  const extraAttempts = asBoundedInt(
+    process.env.AI_MAX_EXTRA_ATTEMPTS,
+    0,
+    4,
+    2,
+  );
+  req.providerContext = {
+    cooldowns: await modelCooldowns(),
+    takeAttempt: createAttemptBudget(
+      (task === "chat"
+        ? 2
+        : remainingStudyCalls(task, taskBody, req.jobParts)) + extraAttempts,
+    ),
+  };
 
   if (task !== "chat") {
     return handleStudyTask({
@@ -1582,11 +1722,13 @@ async function handleRequest(req, res) {
 
   if (task === "chat" && req.body?.stream === true) {
     const streamResult = await requestOpenRouterStream({
+      req,
       body: req.body || {},
       modelRequest,
       userId: user.id,
       res,
       deadline,
+      providerContext: req.providerContext,
       metadata: {
         remaining,
         modelMode: req.body?.deep === true ? "deep" : "fast",
@@ -1603,13 +1745,6 @@ async function handleRequest(req, res) {
           : {}),
       },
     });
-    if (!streamResult.ok && !streamResult.hadDelta) {
-      try {
-        await refundQuota(user.id, quota);
-      } catch (error) {
-        console.error("Quota refund failed:", error?.code || error?.message);
-      }
-    }
     if (streamResult.streamStarted) return;
     const responseStatus =
       streamResult.kind === "timeout"
@@ -1628,14 +1763,14 @@ async function handleRequest(req, res) {
     modelRequest,
     userId: user.id,
     deadline,
+    providerContext: req.providerContext,
   });
 
   if (!modelResult.ok) {
-    try {
-      await refundQuota(user.id, quota);
-    } catch (error) {
-      console.error("Quota refund failed:", error?.code || error?.message);
-    }
+    const restored = await refundFailedRequest(req);
+    await settleJob(req, res);
+    if (modelResult.retryAfter)
+      res.setHeader("Retry-After", String(modelResult.retryAfter));
 
     const responseStatus =
       modelResult.kind === "timeout"
@@ -1645,14 +1780,18 @@ async function handleRequest(req, res) {
           : 502;
     return json(res, responseStatus, {
       error: publicAIError(modelResult.kind),
+      retryAfter: modelResult.retryAfter,
+      remaining: restored,
     });
   }
 
   if (modelRequest.response_format) {
-    return json(res, 200, { data: modelResult.data, remaining });
+    const payload = { data: modelResult.data, remaining };
+    await settleJob(req, res, payload);
+    return json(res, 200, payload);
   }
 
-  return json(res, 200, {
+  const payload = {
     text: modelResult.text,
     remaining,
     modelMode: task === "chat" && req.body?.deep === true ? "deep" : "fast",
@@ -1665,7 +1804,9 @@ async function handleRequest(req, res) {
     ...(onlineSources.length
       ? { sources: onlineSources.map(publicSource) }
       : {}),
-  });
+  };
+  await settleJob(req, res, payload);
+  return json(res, 200, payload);
 }
 
 async function digestBody(body) {
@@ -1682,9 +1823,20 @@ async function modelCooldowns() {
     (data || []).map((row) => [row.model, Date.parse(row.cooldown_until)]),
   );
 }
-async function guardedFetch(userId, payload, signal, send) {
+async function guardedFetch(userId, payload, signal, send, context) {
   signal?.throwIfAborted();
-  await reserveAttempt(getSupabaseAdmin(), userId, "provider");
+  checkProviderCooldown(context.cooldowns, payload.model);
+  context.takeAttempt();
+  try {
+    await reserveAttempt(getSupabaseAdmin(), userId, "provider");
+  } catch (error) {
+    throw Object.assign(error, {
+      kind: "busy",
+      stopRetries: true,
+      status: error.status || 503,
+      retryAfter: error.retryAfter || 60,
+    });
+  }
   const paid =
     !String(payload.model).endsWith(":free") &&
     payload.model !== "openrouter/free";
@@ -1706,8 +1858,12 @@ async function guardedFetch(userId, payload, signal, send) {
       throw Object.assign(new Error("BUDGET_LIMIT"), {
         kind: "budget",
         status: 429,
+        stopRetries: true,
+        retryAfter: 60,
       });
   }
   signal?.throwIfAborted();
-  return send();
+  const response = await send();
+  if (!response.ok) throw await responseError(response, signal);
+  return response;
 }

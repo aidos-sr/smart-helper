@@ -13,7 +13,7 @@ test('unsupported JSON format downgrades only transport, keeping schema and vali
   const calls = [];
   const result = await generateUtility(options(async (payload) => {
     calls.push(payload);
-    return calls.length === 1 ? new Response('{}', { status: 404 }) : completion('{"answer":"ok"}');
+    return calls.length === 1 ? Response.json({error:{message:'No endpoints found that support response_format'}}, { status: 404 }) : completion('{"answer":"ok"}');
   }));
   assert.equal(result.data.answer, 'ok');
   assert.equal(calls[1].model, 'primary');
@@ -56,7 +56,7 @@ test('rate-limited models are skipped by later batches within the same task', as
   const calls = [];
   const request = async (payload) => {
     calls.push(payload.model);
-    return payload.model === 'primary' ? new Response('{}', { status: 429 }) : completion('{"answer":"ok"}');
+    return payload.model === 'primary' ? Response.json({error:{code:429,metadata:{provider_name:'test-provider'}}}, { status: 429 }) : completion('{"answer":"ok"}');
   };
   await generateUtility(options(request, { cooldowns }));
   await generateUtility(options(request, { cooldowns }));

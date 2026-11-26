@@ -72,6 +72,11 @@ async function scopedRequest(task, payload, handlers, options) {
     );
     return result;
   } catch (error) {
+    const remaining = error.remaining || error.metadata?.remaining;
+    if (operation.valid() && remaining)
+      document.dispatchEvent(
+        new CustomEvent("smart-helper:quota", { detail: { remaining } }),
+      );
     if (operation.valid() && error.retryAfter > 0) {
       const until = Date.now() + error.retryAfter * 1000;
       safeStorage.setItem("sh-rate-limit:" + operation.userId, String(until));
