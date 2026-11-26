@@ -11,6 +11,10 @@ export default async function handler(req, res) {
     checkBody(req, 1000);
     const user = await authenticateRequest(req);
     if (!user) return json(401, { error: "Жүйеге кіріңіз" });
+    if (req.body.expectedUserId !== user.id)
+      return json(409, {
+        error: "Сессия өзгерді. Әрекетті өз аккаунтыңызда қайта растаңыз.",
+      });
     const action = req.body?.action;
     if (!["delete", "export"].includes(action))
       return json(400, { error: "Белгісіз әрекет" });

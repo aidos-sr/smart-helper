@@ -1,10 +1,10 @@
-import { withDeadline } from "../../lib/deadline.js";
+import { requestAccount, updatePassword } from "../services/account.js";
 const cancelModules = {
   quiz: () => import("../modules/quiz.js"),
   flashcards: () => import("../modules/flashcards.js"),
   planner: () => import("../modules/planner.js"),
 };
-import { captureSession } from "../../lib/session-scope.js";
+import { captureSession, onSessionReset } from "../../lib/session-scope.js";
 import { safeStorage } from "../../lib/safe-storage.js";
 const $ = (id) => document.getElementById(id);
 const status = (text) => {
@@ -198,31 +198,11 @@ export function installEnhancements({
   const profile = document.createElement("div");
   profile.className = "data-controls";
   $("pg-stats").querySelector(".cont").append(profile);
-  async function account(action) {
-    return withDeadline(
-      async (signal) => {
-        const { data } = await getClient().auth.getSession();
-        const response = await fetch("/api/account", {
-          method: "POST",
-          signal,
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${data.session.access_token}`,
-          },
-          body: JSON.stringify({ action }),
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || "Қате");
-        return result;
-      },
-      { timeoutMs: 15000 },
-    );
-  }
 
   profile.append(
     button("Деректерді экспорттау", async () => {
       const scope = captureSession();
-      const data = await account("export");
+      const data = await requestAccount("export", scope);
       scope.assert();
       const local = {};
       for (const key of safeStorage.keys())
@@ -242,15 +222,16 @@ export function installEnhancements({
       status("Құрылғы көшірмелері тазаланды");
     }),
     button("Аккаунтты біржола жою", async () => {
+      const scope = captureSession(),
+        userId = scope.userId;
       if (
         prompt(
           "Аккаунт пен барлық бұлт деректері біржола жойылады. DELETE деп жазыңыз:",
         ) !== "DELETE"
       )
         return;
-      const scope = captureSession(),
-        userId = scope.userId;
-      await account("delete");
+      scope.assert();
+      await requestAccount("delete", scope);
       for (const key of safeStorage.keys())
         if (key.includes(userId)) safeStorage.removeItem(key);
       if (scope.valid()) {
@@ -453,19 +434,32 @@ export function installEnhancements({
   recovery.hidden = true;
   recovery.innerHTML =
     '<label for="newPassword">Жаңа құпия сөз</label><input id="newPassword" type="password" autocomplete="new-password" minlength="8" required><button type="submit" class="bpri">Сақтау</button>';
+  let recoveryScope = null;
+  onSessionReset(() => {
+    recoveryScope = null;
+    recovery.hidden = true;
+    $("newPassword").value = "";
+  });
   recovery.onsubmit = async (event) => {
     event.preventDefault();
-    const { error } = await getClient().auth.updateUser({
-      password: $("newPassword").value,
-    });
-    if (error) status(error.message);
-    else {
+    const scope = recoveryScope,
+      button = recovery.querySelector("button");
+    button.disabled = true;
+    try {
+      await updatePassword($("newPassword").value, scope);
+      scope.assert();
       recovery.hidden = true;
+      $("newPassword").value = "";
       status("Құпия сөз өзгертілді");
+    } catch (error) {
+      if (scope?.valid()) status(error.message);
+    } finally {
+      button.disabled = false;
     }
   };
   $("fL").after(recovery);
   document.addEventListener("smart-helper:recovery", () => {
+    recoveryScope = captureSession();
     document
       .querySelectorAll(".page,.chatwrap")
       .forEach((el) => el.classList.remove("on"));

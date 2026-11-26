@@ -1,3 +1,4 @@
+import { hasAuthCallback } from "../lib/auth-callback.js";
 import "./compat.js";
 import { paginateChatMessages } from "../lib/chat-pages.js";
 import { safeStorage as localStorage } from "../lib/safe-storage.js";
@@ -1230,7 +1231,10 @@ installEnhancements({
   stopChat: () => activeChatController?.abort(),
   loadHistory: () => loadHistory(true),
 });
-if (localStorage.keys().some((key) => /^sb-.*-auth-token$/.test(key)))
+if (
+  hasAuthCallback(location) ||
+  localStorage.keys().some((key) => /^sb-.*-auth-token$/.test(key))
+)
   initSupabase().catch(showConnectionError);
 else if (intendedPage && !["about", "auth"].includes(intendedPage))
   go(intendedPage);

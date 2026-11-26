@@ -3,6 +3,8 @@ import { captureSession, setSessionOwner } from "../../lib/session-scope.js";
 
 let client = null;
 let currentSession = null;
+let publicAuthConfig = null,
+  authEventVersion = 0;
 let currentUser = null,
   subscription = null,
   initializing = null;
@@ -29,6 +31,10 @@ export function initializeSupabase(onSessionChange) {
       const config = await response.json().catch(() => ({}));
       if (!response.ok)
         throw new Error(config.error || "Конфигурация жүктелмеді");
+      publicAuthConfig = {
+        supabaseUrl: config.supabaseUrl,
+        supabasePublishableKey: config.supabasePublishableKey,
+      };
       if (!client) {
         const { createClient } = await import("@supabase/supabase-js");
         signal.throwIfAborted();
@@ -46,14 +52,18 @@ export function initializeSupabase(onSessionChange) {
       }
       subscription?.unsubscribe();
       subscription = client.auth.onAuthStateChange((event, session) => {
+        authEventVersion++;
         rememberSession(session);
         onSessionChange(session, event);
       }).data.subscription;
+      const version = authEventVersion;
       const { data, error } = await client.auth.getSession();
       signal.throwIfAborted();
       if (error) throw error;
-      rememberSession(data.session);
-      onSessionChange(data.session);
+      if (version === authEventVersion) {
+        rememberSession(data.session);
+        onSessionChange(data.session);
+      }
       return client;
     },
     { timeoutMs: 15000 },
@@ -86,4 +96,8 @@ export async function refreshCurrentSession() {
   scope.assert();
   rememberSession(data.session);
   return data.session;
+}
+
+export function getPublicAuthConfig() {
+  return publicAuthConfig;
 }
