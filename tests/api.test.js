@@ -175,7 +175,7 @@ test("handler keeps partial answers explicitly incomplete and does not mix model
   assert.equal(requests.length, 1);
   assert.equal(events(res).at(-1).type, "error");
   assert.equal(events(res).at(-1).partialText, "Жарты жауап");
-  assert.equal(refunds, 0);
+  assert.equal(refunds, 1);
 });
 test("handler falls back after an empty provider without sending headers twice", async () => {
   modelResponse = () =>
@@ -201,7 +201,7 @@ test("handler rejects unauthenticated and overlong input before charging quota",
   );
   assert.equal(requests.length, 0);
 });
-test("invalid study output is rejected after bounded repairs on every fallback", async () => {
+test("invalid study output stops at the request budget instead of repairing every fallback", async () => {
   modelResponse = () =>
     json({
       choices: [
@@ -213,7 +213,7 @@ test("invalid study output is rejected after bounded repairs on every fallback",
     });
   const res = await invoke({ task: "flashcards", topic: "Physics" });
   assert.equal(res.statusCode, 502);
-  assert.equal(requests.length, 6);
+  assert.equal(requests.length, 3);
   assert.ok(
     requests.every((request) => request.response_format.type === "json_object"),
   );
@@ -492,10 +492,12 @@ test("server classifies auth outages as unavailable and never charges a user", a
   assert.equal(reservations, 0);
   assert.equal(requests.length, 0);
 });
-test("attempt counters are not refunded with the teaching quota", async () => {
+test("failed replies restore teaching minute and daily quota while separate anti-spam counters remain spent", async () => {
   let patch;
+  let attempts = 0;
   const testFetch = globalThis.fetch;
   globalThis.fetch = (url, init) => {
+    if (String(url).includes("/rpc/reserve_ai_attempt")) attempts++;
     if (String(url).includes("/rest/v1/ai_usage") && init?.method === "PATCH")
       patch = JSON.parse(init.body);
     return testFetch(url, init);
@@ -505,13 +507,16 @@ test("attempt counters are not refunded with the teaching quota", async () => {
       headers: { "content-type": "text/event-stream" },
     });
   await invoke(chat);
-  assert.equal(patch.minute_count, 1);
+  assert.equal(patch.minute_count, 0);
   assert.equal(patch.day_count, 0);
+  assert.equal(attempts, 4); // One incoming request, three actual provider calls.
 });
 test("completed operations replay without charging quota or calling a model", async () => {
+  let attempts = 0;
   const testFetch = globalThis.fetch;
-  globalThis.fetch = (url, init) =>
-    String(url).includes("/rpc/claim_ai_job")
+  globalThis.fetch = (url, init) => {
+    if (String(url).includes("/rpc/reserve_ai_attempt")) attempts++;
+    return String(url).includes("/rpc/claim_ai_job")
       ? Promise.resolve(
           json({
             cached: {
@@ -520,16 +525,248 @@ test("completed operations replay without charging quota or calling a model", as
           }),
         )
       : testFetch(url, init);
+  };
   const response = await invoke({ task: "quiz", topic: "Replay", count: 3 });
   assert.equal(response.statusCode, 200);
   assert.equal(response.payload.data.questions.length, 3);
   assert.equal(reservations, 0);
   assert.equal(requests.length, 0);
+  assert.equal(attempts, 0);
 });
 
-test('resuming a partial quiz reuses checked questions and generates only the missing batch',async()=>{
- const testFetch=globalThis.fetch;
- globalThis.fetch=(url,init)=>String(url).includes('/rpc/claim_ai_job')?Promise.resolve(json({parts:[{index:0,model:'earlier-model',data:{questions:Array.from({length:5},(_,i)=>question(i+1))}}]})):testFetch(url,init);
- modelResponse=request=>{const count=getSchema(request).properties.questions.minItems;assert.equal(count,5);assert.ok(request.messages.at(-1).content.includes('сұрақ 1?'));return completeJSON({questions:Array.from({length:5},(_,i)=>question(i+6))});};
- const result=await invoke({task:'quiz',topic:'Resume',count:10,stream:true});assert.equal(events(result).at(-1).type,'done');assert.equal(events(result).at(-1).data.questions.length,10);assert.equal(requests.length,1);
+test("failed study quota and job lease settle before the terminal browser event", async () => {
+  const order = [],
+    res = new ResponseMock(),
+    testFetch = globalThis.fetch;
+  const end = res.end.bind(res);
+  res.end = () => {
+    order.push("end");
+    end();
+  };
+  globalThis.fetch = (url, init) => {
+    if (String(url).includes("/rest/v1/ai_usage") && init?.method === "PATCH") {
+      assert.equal(res.writableEnded, false);
+      order.push("refund");
+    }
+    if (
+      String(url).includes("/rest/v1/ai_jobs") &&
+      init?.method === "PATCH" &&
+      JSON.parse(init.body).status === "partial"
+    ) {
+      assert.equal(res.writableEnded, false);
+      order.push("release");
+    }
+    return testFetch(url, init);
+  };
+  modelResponse = () =>
+    Response.json(
+      {
+        error: {
+          code: 429,
+          message: "Rate limit exceeded: free-models-per-min.",
+        },
+      },
+      { status: 429, headers: { "Retry-After": "43" } },
+    );
+  await handler(
+    {
+      method: "POST",
+      headers: { authorization: "Bearer test-session" },
+      body: { task: "quiz", topic: "Check", count: 5, stream: true },
+    },
+    res,
+  );
+  assert.equal(requests.length, 1);
+  assert.deepEqual(order, ["refund", "release", "end"]);
+  const error = events(res).at(-1);
+  assert.equal(error.retryAfter, 43);
+  assert.deepEqual(error.remaining, { day: 50, minute: 10 });
+});
+
+test("shared provider cooldown is persisted and stops later jobs without another provider call", async () => {
+  const rows = new Map(),
+    testFetch = globalThis.fetch;
+  globalThis.fetch = (url, init) => {
+    if (String(url).includes("/rest/v1/ai_model_health")) {
+      if (init?.method === "POST") {
+        const row = JSON.parse(init.body);
+        rows.set(row.model, row);
+        return Promise.resolve(json([]));
+      }
+      return Promise.resolve(json([...rows.values()]));
+    }
+    return testFetch(url, init);
+  };
+  modelResponse = () =>
+    Response.json(
+      {
+        error: {
+          code: 429,
+          message: "Rate limit exceeded: free-models-per-day.",
+        },
+      },
+      { status: 429, headers: { "retry-after": "120" } },
+    );
+  const first = await invoke({
+    task: "quiz",
+    topic: "First",
+    count: 3,
+    stream: true,
+  });
+  assert.equal(events(first).at(-1).retryAfter, 120);
+  assert.ok(rows.has("openrouter:free"));
+  const second = await invoke({ ...chat });
+  assert.equal(events(second).at(-1).code, "busy");
+  assert.equal(requests.length, 1);
+  assert.equal(refunds, 2);
+});
+
+test("successful study result is durable before closing the browser response", async () => {
+  const res = new ResponseMock(),
+    testFetch = globalThis.fetch;
+  let cached;
+  globalThis.fetch = (url, init) => {
+    if (String(url).includes("/rest/v1/ai_jobs") && init?.method === "PATCH") {
+      const patch = JSON.parse(init.body);
+      if (patch.status === "complete") {
+        assert.equal(res.writableEnded, false);
+        cached = patch.result;
+      }
+    }
+    return testFetch(url, init);
+  };
+  await handler(
+    {
+      method: "POST",
+      headers: { authorization: "Bearer test-session" },
+      body: { task: "fix", input: "Text", stream: true },
+    },
+    res,
+  );
+  assert.equal(cached.text, "Дұрыс жауап");
+  assert.equal(events(res).at(-1).type, "done");
+});
+
+test("provider attempt denial is terminal and never fans out into more models", async () => {
+  const testFetch = globalThis.fetch;
+  let providerReservations = 0;
+  globalThis.fetch = (url, init) => {
+    if (
+      String(url).includes("/rpc/reserve_ai_attempt") &&
+      JSON.parse(init.body).p_channel === "provider"
+    ) {
+      providerReservations++;
+      return Promise.resolve(
+        json({ allowed: false, reason: "ATTEMPT_LIMIT", retryAfter: 20 }),
+      );
+    }
+    return testFetch(url, init);
+  };
+  const response = await invoke({
+    task: "flashcards",
+    topic: "Limits",
+    stream: true,
+  });
+  assert.equal(events(response).at(-1).retryAfter, 20);
+  assert.equal(providerReservations, 1);
+  assert.equal(requests.length, 0);
+  assert.equal(refunds, 1);
+});
+
+test("cached chat completions preserve the actual provider citations", async () => {
+  const testFetch = globalThis.fetch;
+  let cached;
+  globalThis.fetch = (url, init) => {
+    if (String(url).includes("/rest/v1/ai_jobs") && init?.method === "PATCH") {
+      const patch = JSON.parse(init.body);
+      if (patch.status === "complete") cached = patch.result;
+    }
+    return testFetch(url, init);
+  };
+  modelResponse = () =>
+    new Response(
+      encode({
+        choices: [
+          {
+            delta: {
+              content: "Answer",
+              annotations: [
+                {
+                  type: "url_citation",
+                  url_citation: {
+                    title: "Reference",
+                    url: "https://example.org/reference",
+                  },
+                },
+              ],
+            },
+            finish_reason: "stop",
+          },
+        ],
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+  const res = await invoke({ ...chat, deep: true, web: true });
+  assert.equal(events(res).at(-1).type, "done");
+  assert.equal(cached.sources[0].url, "https://example.org/reference");
+  assert.equal(cached.webStatus, "ok");
+});
+
+test("a broken response transport cannot refund the same reservation twice", async () => {
+  const res = new ResponseMock();
+  const write = res.write.bind(res);
+  res.write = (chunk) => {
+    if (chunk.includes('"type":"error"')) throw new Error("Transport closed");
+    write(chunk);
+  };
+  modelResponse = () =>
+    Response.json({ error: { code: 402 } }, { status: 402 });
+  await handler(
+    {
+      method: "POST",
+      headers: { authorization: "Bearer test-session" },
+      body: { ...chat },
+    },
+    res,
+  );
+  assert.equal(refunds, 1);
+});
+
+test("resuming a partial quiz reuses checked questions and generates only the missing batch", async () => {
+  const testFetch = globalThis.fetch;
+  globalThis.fetch = (url, init) =>
+    String(url).includes("/rpc/claim_ai_job")
+      ? Promise.resolve(
+          json({
+            parts: [
+              {
+                index: 0,
+                model: "earlier-model",
+                data: {
+                  questions: Array.from({ length: 5 }, (_, i) =>
+                    question(i + 1),
+                  ),
+                },
+              },
+            ],
+          }),
+        )
+      : testFetch(url, init);
+  modelResponse = (request) => {
+    const count = getSchema(request).properties.questions.minItems;
+    assert.equal(count, 5);
+    assert.ok(request.messages.at(-1).content.includes("сұрақ 1?"));
+    return completeJSON({
+      questions: Array.from({ length: 5 }, (_, i) => question(i + 6)),
+    });
+  };
+  const result = await invoke({
+    task: "quiz",
+    topic: "Resume",
+    count: 10,
+    stream: true,
+  });
+  assert.equal(events(result).at(-1).type, "done");
+  assert.equal(events(result).at(-1).data.questions.length, 10);
+  assert.equal(requests.length, 1);
 });

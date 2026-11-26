@@ -92,7 +92,7 @@ test('provider falls back on rate limit before any answer', async () => {
   const models = [];
   const result = await generateChatStream(options(async ({ model }) => {
     models.push(model);
-    return model === 'primary' ? new Response('{}', { status: 429 }) : answer();
+    return model === 'primary' ? Response.json({error:{code:429,metadata:{provider_name:'test-provider'}}}, { status: 429 }) : answer();
   }));
   assert.equal(result.ok, true);
   assert.deepEqual(models, ['primary', 'backup']);

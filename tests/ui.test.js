@@ -451,3 +451,33 @@ test("Retry-After prevents a second provider call and card XP requires viewing t
   cards.fcResult("good");
   assert.equal(Number(safeStorage.getItem("sh-xp:" + A) || 0), before + 5);
 });
+
+test("a failed streamed request refreshes the visible quota with its restored balance", async () => {
+  await switchUser(A);
+  const { safeStorage } = await import("../lib/safe-storage.js");
+  safeStorage.removeItem("sh-rate-limit:" + A);
+  aiReply = () =>
+    Promise.resolve(
+      new Response(
+        encode({
+          type: "error",
+          error: "Provider unavailable",
+          remaining: { day: 50, minute: 10 },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+    );
+  let visible;
+  const listener = ({ detail }) => {
+    visible = detail.remaining;
+  };
+  document.addEventListener("smart-helper:quota", listener);
+  try {
+    const { requestAI } = await import("../src/services/ai.js");
+    await assert.rejects(requestAI("fix", { input: "Check refund" }));
+    assert.deepEqual(visible, { day: 50, minute: 10 });
+    assert.match(document.querySelector("#quotaStatus").textContent, /50/);
+  } finally {
+    document.removeEventListener("smart-helper:quota", listener);
+  }
+});
