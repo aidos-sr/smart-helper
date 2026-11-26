@@ -1017,9 +1017,15 @@ function renderHist() {
     return;
   }
   hist.forEach((ch) => {
+    const title = ch.title || "Сұхбат";
+    const item = document.createElement("div");
+    item.className = "history-item" + (ch.id === chatId ? " on" : "");
     const d = document.createElement("button");
+    d.type = "button";
     d.className = "hi" + (ch.id === chatId ? " on" : "");
-    d.innerHTML = `<div class="hi-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--tx3)" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><span class="hit">${esc(ch.title || "Сұхбат")}</span>`;
+    d.title = title;
+    d.setAttribute("aria-current", String(ch.id === chatId));
+    d.innerHTML = `<span class="hi-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><span class="hit">${esc(title)}</span>`;
     d.onclick = async () => {
       if (chatRequestActive) return;
       const scope = captureSession(),
@@ -1064,9 +1070,11 @@ function renderHist() {
       document.getElementById("csb").classList.remove("open");
     };
     const remove = document.createElement("button");
-    remove.textContent = "×";
-    remove.className = "act-btn";
-    remove.setAttribute("aria-label", "Чатты жою");
+    remove.type = "button";
+    remove.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg>';
+    remove.className = "history-delete";
+    remove.title = "Чатты жою";
+    remove.setAttribute("aria-label", `«${title}» чатын жою`);
     remove.onclick = async () => {
       if (!confirm("Чатты біржола жою керек пе?")) return;
       try {
@@ -1079,13 +1087,19 @@ function renderHist() {
           "Жою орындалмады";
       }
     };
-    l.append(d, remove);
+    item.append(d, remove);
+    l.append(item);
   });
 }
 function hlHist() {
   document
     .querySelectorAll(".hi")
-    .forEach((el, i) => el.classList.toggle("on", hist[i]?.id === chatId));
+    .forEach((el, i) => {
+      const active = hist[i]?.id === chatId;
+      el.classList.toggle("on", active);
+      el.parentElement.classList.toggle("on", active);
+      el.setAttribute("aria-current", String(active));
+    });
 }
 
 /* ═══ BURGER ═══ */

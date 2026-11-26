@@ -465,6 +465,11 @@ body.menu-is-open {
   .hi {
     min-height: 44px;
   }
+  .history-delete {
+    flex-basis: 44px;
+    width: 44px;
+    height: 44px;
+  }
 }
 @media (max-width: 600px) {
   .cont {
