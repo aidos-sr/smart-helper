@@ -1,38 +1,76 @@
-import { createClient } from '@supabase/supabase-js';
+import { withDeadline } from "../../lib/deadline.js";
+import { captureSession, setSessionOwner } from "../../lib/session-scope.js";
 
 let client = null;
 let currentSession = null;
-let currentUser = null;
+let publicAuthConfig = null,
+  authEventVersion = 0;
+let currentUser = null,
+  subscription = null,
+  initializing = null;
 
 function requireClient() {
-  if (!client) throw new Error('Supabase әлі дайын емес');
+  if (!client) throw new Error("Supabase әлі дайын емес");
   return client;
 }
 
 function rememberSession(session) {
+  setSessionOwner(session?.user?.id);
   currentSession = session || null;
   currentUser = session?.user || null;
 }
 
-export async function initializeSupabase(onSessionChange) {
-  const response = await fetch('/api/config', { headers: { Accept: 'application/json' } });
-  const config = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(config.error || 'Supabase конфигурациясы жүктелмеді');
-
-  client = createClient(config.supabaseUrl, config.supabasePublishableKey, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+export function initializeSupabase(onSessionChange) {
+  if (initializing) return initializing;
+  initializing = withDeadline(
+    async (signal) => {
+      const response = await fetch("/api/config", {
+        signal,
+        headers: { Accept: "application/json" },
+      });
+      const config = await response.json().catch(() => ({}));
+      if (!response.ok)
+        throw new Error(config.error || "Конфигурация жүктелмеді");
+      publicAuthConfig = {
+        supabaseUrl: config.supabaseUrl,
+        supabasePublishableKey: config.supabasePublishableKey,
+      };
+      if (!client) {
+        const { createClient } = await import("@supabase/supabase-js");
+        signal.throwIfAborted();
+        client = createClient(
+          config.supabaseUrl,
+          config.supabasePublishableKey,
+          {
+            auth: {
+              persistSession: true,
+              autoRefreshToken: true,
+              detectSessionInUrl: true,
+            },
+          },
+        );
+      }
+      subscription?.unsubscribe();
+      subscription = client.auth.onAuthStateChange((event, session) => {
+        authEventVersion++;
+        rememberSession(session);
+        onSessionChange(session, event);
+      }).data.subscription;
+      const version = authEventVersion;
+      const { data, error } = await client.auth.getSession();
+      signal.throwIfAborted();
+      if (error) throw error;
+      if (version === authEventVersion) {
+        rememberSession(data.session);
+        onSessionChange(data.session);
+      }
+      return client;
+    },
+    { timeoutMs: 15000 },
+  ).finally(() => {
+    initializing = null;
   });
-
-  client.auth.onAuthStateChange((_event, session) => {
-    rememberSession(session);
-    onSessionChange(session);
-  });
-
-  const { data, error } = await client.auth.getSession();
-  if (error) throw error;
-  rememberSession(data.session);
-  onSessionChange(data.session);
-  return client;
+  return initializing;
 }
 
 export function getSupabaseClient() {
@@ -52,8 +90,14 @@ export function getCurrentUser() {
 }
 
 export async function refreshCurrentSession() {
+  const scope = captureSession();
   const { data, error } = await requireClient().auth.refreshSession();
-  if (error || !data.session) throw error || new Error('Қайта кіріп көріңіз');
+  if (error || !data.session) throw error || new Error("Қайта кіріп көріңіз");
+  scope.assert();
   rememberSession(data.session);
   return data.session;
+}
+
+export function getPublicAuthConfig() {
+  return publicAuthConfig;
 }
