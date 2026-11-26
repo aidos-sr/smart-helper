@@ -636,6 +636,6 @@ body.menu-is-open {
     grid-template-columns: minmax(0, 1fr);
   }
   .study-options__grid {
-    grid-template-columns: 0.75fr 1.25fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

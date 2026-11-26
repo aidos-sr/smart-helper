@@ -189,7 +189,12 @@ export function nextCard() {
       ).toLocaleDateString();
 }
 
-async function generateFlashcards(topic, sourceText = "", operationId) {
+async function generateFlashcards(
+  topic,
+  sourceText = "",
+  operationId,
+  legacyGrade,
+) {
   if (!topic) {
     setStatus("Тақырып жазыңыз", "error");
     document.getElementById("fcGenTopic").focus();
@@ -206,7 +211,7 @@ async function generateFlashcards(topic, sourceText = "", operationId) {
   setStatus("1/3 · Сұрау AI-ға жіберілді", "loading");
   try {
     setStatus("2/3 · AI карточкаларды құруда", "loading");
-    const specification = { topic, sourceText, ...studyOptions() };
+    const specification = { topic, sourceText, ...studyOptions(legacyGrade) };
     const response = await requestAI("flashcards", specification, {
       signal,
       operationId,
@@ -295,10 +300,10 @@ export async function loadSavedFlashcards() {
   }
 }
 
-function studyOptions() {
+function studyOptions(legacyGrade) {
   return {
     variant: document.getElementById("studyVariant")?.value || "",
-    grade: document.getElementById("studyGrade")?.value || "",
+    ...(legacyGrade ? { grade: legacyGrade } : {}),
     difficulty: document.getElementById("studyDifficulty")?.value || "medium",
     language: document.getElementById("studyLanguage")?.value || "kk",
   };
@@ -309,5 +314,6 @@ export function resumeFlashcards(payload, operationId) {
     payload.topic,
     payload.sourceText || "",
     operationId,
+    payload.grade,
   );
 }

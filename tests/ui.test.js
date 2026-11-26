@@ -247,7 +247,7 @@ test("shared study settings stay below the heading when switching study pages", 
     assert.ok(options.previousElementSibling.matches(".study-page-heading"));
     assert.equal(options.closest(".study-page-heading"), null);
   }
-  for (const id of ["studyGrade", "studyDifficulty", "studyLanguage"]) {
+  for (const id of ["studyDifficulty", "studyLanguage"]) {
     assert.equal(document.getElementById(id).labels[0].htmlFor, id);
   }
   const resume = options.querySelector(

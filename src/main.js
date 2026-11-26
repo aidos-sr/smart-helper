@@ -1278,7 +1278,8 @@ document.addEventListener("smart-helper:resume-job", async ({ detail }) => {
   } else if (detail.task === "flashcards") {
     const m = await import("./modules/flashcards.js");
     m.resumeFlashcards(detail.payload, detail.id);
-  } else if (detail.task === "planner") runPlanner(detail.id);
+  } else if (detail.task === "planner")
+    runPlanner(detail.id, detail.payload.grade);
 });
 
 function moveStudyOptions(page) {

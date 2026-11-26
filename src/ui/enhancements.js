@@ -585,7 +585,6 @@ export function installEnhancements({
     for (const [key, id] of Object.entries(ids))
       if (saved.payload[key] !== undefined) $(id).value = saved.payload[key];
     for (const [key, id] of [
-      ["grade", "studyGrade"],
       ["difficulty", "studyDifficulty"],
       ["language", "studyLanguage"],
       ["variant", "studyVariant"],

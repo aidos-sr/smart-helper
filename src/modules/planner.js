@@ -38,7 +38,7 @@ export function initPlanner() {
   });
 }
 
-export async function runPlanner(operationId) {
+export async function runPlanner(operationId, legacyGrade) {
   const topic = document.getElementById("planTopic").value.trim();
   const goal = document.getElementById("planGoal").value.trim();
   const days = document.getElementById("planDays").value;
@@ -66,7 +66,7 @@ export async function runPlanner(operationId) {
       goal,
       days: Number(days),
       hours: Number(hours),
-      ...studyOptions(),
+      ...studyOptions(legacyGrade),
     };
     const response = await requestAI("planner", specification, {
       signal,
@@ -244,10 +244,10 @@ function renderPlan(days, result) {
   });
 }
 
-function studyOptions() {
+function studyOptions(legacyGrade) {
   return {
     variant: document.getElementById("studyVariant")?.value || "",
-    grade: document.getElementById("studyGrade")?.value || "",
+    ...(legacyGrade ? { grade: legacyGrade } : {}),
     difficulty: document.getElementById("studyDifficulty")?.value || "medium",
     language: document.getElementById("studyLanguage")?.value || "kk",
   };
