@@ -325,42 +325,14 @@ let pendingAttachments = [],
 let chatRequestActive = false;
 const retryRequests = new Map();
 const answerTexts = new Map();
-let webEnabled = localStorage.getItem("sh-web") === "on";
-let deepEnabled = localStorage.getItem("sh-deep-v2") === "on";
 const msa = document.getElementById("msa");
 const cta = document.getElementById("cta");
 const sndbtn = document.getElementById("sndbtn");
-const webbtn = document.getElementById("webbtn");
-const deepbtn = document.getElementById("deepbtn");
 const modelBadgeText = document.getElementById("modelBadgeText");
 const chatFileInput = document.getElementById("chatFileInput");
 const attachmentList = document.getElementById("attachmentList");
 const attachmentError = document.getElementById("attachmentError");
 const attachBtn = document.getElementById("attachBtn");
-
-function setWebEnabled(enabled) {
-  webEnabled = enabled;
-  localStorage.setItem("sh-web", enabled ? "on" : "off");
-  webbtn.classList.toggle("on", enabled);
-  webbtn.setAttribute("aria-pressed", String(enabled));
-  webbtn.title = enabled
-    ? "Интернеттен, Wikipedia және ғылыми дерекқорлардан іздеу қосулы"
-    : "Интернет іздеуі өшірулі";
-}
-
-function setDeepEnabled(enabled) {
-  deepEnabled = enabled;
-  localStorage.setItem("sh-deep-v2", enabled ? "on" : "off");
-  deepbtn.classList.toggle("on", enabled);
-  deepbtn.setAttribute("aria-pressed", String(enabled));
-  deepbtn.title = enabled
-    ? "Терең жауап режимі қосулы. AI және веб-іздеу провайдер тарифіне сай ақы алуы мүмкін."
-    : "Жылдам жауап режимі қосулы";
-  modelBadgeText.textContent = enabled ? "Күшті AI · тариф" : "Жылдам AI";
-}
-
-setWebEnabled(webEnabled);
-setDeepEnabled(deepEnabled);
 
 sndbtn.onclick = sendMsg;
 cta.addEventListener("keydown", (e) => {
@@ -639,8 +611,8 @@ async function sendMsg() {
         ...(attachments?.length ? { attachments } : {}),
       })),
     title: msgs[0]?.content || text,
-    web: webEnabled,
-    deep: deepEnabled,
+    web: false,
+    deep: false,
   };
   await runAssistantRequest(request);
 }
@@ -751,9 +723,7 @@ async function runAssistantRequest(request, retryKey = crypto.randomUUID()) {
             modelBadgeText.title = meta.model;
             modelBadgeText.textContent = meta.fallback
               ? "Резерв AI"
-              : request.deep
-                ? "Күшті AI · тариф"
-                : "Жылдам AI";
+              : "Жылдам AI";
           }
         },
         onDelta: (_delta, fullText) => {
@@ -1166,8 +1136,6 @@ document.addEventListener("click", (event) => {
     "run-planner": () => runPlanner(),
     "run-tool": () => runTool(control.dataset.tool, control),
     "set-flashcard-subject": () => setFCSubj(control),
-    "toggle-deep": () => setDeepEnabled(!deepEnabled),
-    "toggle-web": () => setWebEnabled(!webEnabled),
   };
   actions[control.dataset.action]?.();
 });

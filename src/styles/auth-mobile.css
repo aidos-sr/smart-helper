@@ -453,10 +453,6 @@ body.menu-is-open {
     gap: 8px;
     margin-top: 8px;
   }
-  .chat-toggle {
-    min-height: 36px;
-    font-size: 0.78rem;
-  }
   .ihint {
     width: 100%;
     font-size: 0.7rem;
