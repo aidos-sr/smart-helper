@@ -9,15 +9,20 @@
   "scripts": {
     "dev": "vite",
     "check": "node scripts/check.mjs",
-    "build": "npm run check && vite build",
+    "build": "npm run check && npm test && vite build",
     "preview": "vite preview",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "metrics:summary": "node scripts/metrics-summary.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.1",
-    "katex": "^0.19.1"
+    "image-size": "^2.1.0",
+    "katex": "^0.19.1",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
-    "vite": "^8.2.0"
+    "@electric-sql/pglite": "^0.6.0",
+    "jsdom": "^31.0.1",
+    "vite": "^8.3.8"
   }
 }
