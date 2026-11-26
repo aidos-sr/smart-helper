@@ -1280,5 +1280,7 @@ function moveStudyOptions(page) {
   options.hidden =
     !currentUser || !["quiz", "planner", "flashcard"].includes(page);
   if (!options.hidden)
-    document.querySelector("#pg-" + page + " .st").after(options);
+    document
+      .querySelector("#pg-" + page + " .study-page-heading, #pg-" + page + " .st")
+      .after(options);
 }

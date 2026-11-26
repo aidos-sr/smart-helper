@@ -6,6 +6,14 @@ const cancelModules = {
 };
 import { captureSession, onSessionReset } from "../../lib/session-scope.js";
 import { safeStorage } from "../../lib/safe-storage.js";
+import {
+  arrangeMaterialLibrary,
+  attachStopAction,
+  createStudyOptions,
+  ensureStudyHeading,
+  installActionMenus,
+  styleAction,
+} from "./study-controls.js";
 const $ = (id) => document.getElementById(id);
 const status = (text) => {
   const el = $("appStatus");
@@ -14,7 +22,7 @@ const status = (text) => {
 function button(text, fn) {
   const el = document.createElement("button");
   el.type = "button";
-  el.className = "nghost";
+  el.className = "sh-button sh-button--secondary";
   el.textContent = text;
   el.onclick = () =>
     Promise.resolve()
@@ -121,6 +129,7 @@ export function installEnhancements({
   live.role = "status";
   live.className = "app-status";
   document.body.append(live);
+  installActionMenus();
   // Associate every existing visual label and give permanent accessible names.
   document.querySelectorAll("label").forEach((label) => {
     const input = label.nextElementSibling;
@@ -179,6 +188,7 @@ export function installEnhancements({
     );
   }
   const stop = button("Тоқтату", stopChat);
+  styleAction(stop, { name: "stop", tone: "danger" });
   stop.id = "chatStop";
   stop.hidden = true;
   $("sndbtn").after(stop);
@@ -250,6 +260,9 @@ export function installEnhancements({
     area.className = "library-actions";
     select.after(area);
     let offset = 0;
+    onSessionReset(() => {
+      offset = 0;
+    });
     const search = document.createElement("input");
     search.type = "search";
     search.className = "pf-input";
@@ -258,6 +271,7 @@ export function installEnhancements({
     let timer;
     search.oninput = () => {
       clearTimeout(timer);
+      offset = 0;
       timer = setTimeout(
         () =>
           import("../modules/library.js")
@@ -277,6 +291,12 @@ export function installEnhancements({
           ).organizeMaterial(selectId, folder, tags);
       }),
       search,
+      button("Алдыңғы бет", () => {
+        offset = Math.max(0, offset - 30);
+        return import("../modules/library.js").then((m) =>
+          m.fillMaterialSelect(selectId, kind, offset, search.value),
+        );
+      }),
       button("Келесі бет", () => {
         offset += 30;
         return import("../modules/library.js").then((m) =>
@@ -337,51 +357,76 @@ export function installEnhancements({
       }),
       button("Басып шығару", () => window.print()),
     );
-    select
-      .closest(".page")
-      .querySelector(".st")
-      .after(
-        button("Генерацияны тоқтату", async () => {
-          await (await cancelModules[module]())[cancel]();
-          status("Тоқтатылды. Сақталған бөліктерді жалғастыруға болады.");
-        }),
-      );
+    const page = select.closest(".page");
+    arrangeMaterialLibrary({ select, area, kind, getOffset: () => offset });
+    const [trigger, progress] = {
+      quiz: ["quizGenBtn", "quizGenStatus"],
+      flashcards: ["fcGenBtn", "fcGenStatus"],
+      planner: ["planBtn", "planStatus"],
+    }[kind];
+    attachStopAction(
+      page,
+      button("Тоқтату", async () => {
+        await (await cancelModules[module]())[cancel]();
+        status("Тоқтатылды. Сақталған бөліктерді жалғастыруға болады.");
+      }),
+      $(trigger),
+      $(progress),
+    );
   }
-  for (const el of document.querySelectorAll("[data-action=run-tool]"))
-    el.after(
+  for (const el of document.querySelectorAll("[data-action=run-tool]")) {
+    const stop = styleAction(
       button("Тоқтату", async () => {
         (await import("../modules/tools.js")).cancelTools();
         status("Тоқтатылды");
       }),
+      { name: "stop", tone: "danger" },
     );
+    el.after(stop);
+    const update = () => {
+      stop.hidden = !el.disabled || Boolean(el.dataset.retryAt);
+    };
+    new MutationObserver(update).observe(el, {
+      attributes: true,
+      attributeFilter: ["disabled", "data-retry-at"],
+    });
+    update();
+  }
   // Optional generation specification shared by the three study tools.
-  const options = document.createElement("div");
-  options.className = "study-options";
-  options.innerHTML =
-    '<label for="studyGrade">Сынып</label><input id="studyGrade" type="number" min="1" max="12" placeholder="1–12"><label for="studyDifficulty">Күрделілік</label><select id="studyDifficulty"><option value="easy">Жеңіл</option><option value="medium" selected>Орташа</option><option value="hard">Күрделі</option></select><label for="studyLanguage">Тіл</label><select id="studyLanguage"><option value="kk">Қазақша</option><option value="ru">Русский</option></select><small>AI материалын сабақта қолданар алдында тексеріңіз. XP — оқу белсенділігі, баға емес.</small>';
-  options.hidden = true;
+  const { options, actions: optionActions } = createStudyOptions();
   document.body.append(options);
   const variant = document.createElement("input");
   variant.type = "hidden";
   variant.id = "studyVariant";
-  options.append(
-    variant,
-    button("Жаңа нұсқа", () => {
-      variant.value = crypto.randomUUID();
-      status("Жаңа нұсқа таңдалды. «Жасау» басыңыз.");
-    }),
+  options.append(variant);
+  optionActions.append(
+    styleAction(
+      button("Жаңа нұсқа", () => {
+        variant.value = crypto.randomUUID();
+        status("Жаңа нұсқа таңдалды. «Жасау» басыңыз.");
+      }),
+      { name: "refresh", tone: "quiet" },
+    ),
   );
-  document.querySelector("#pg-quiz .st").after(
-    button("Жаңа тест", async () => {
-      (await import("../modules/quiz.js")).resetQuiz();
-    }),
+  ensureStudyHeading($("pg-quiz")).prepend(
+    styleAction(
+      button("Жаңа тест", async () => {
+        (await import("../modules/quiz.js")).resetQuiz();
+      }),
+      { name: "plus" },
+    ),
   );
   const start = document.createElement("input");
   start.id = "planStart";
   start.type = "date";
+  start.className = "pf-input";
   start.setAttribute("aria-label", "Жоспар басталатын күн");
   start.value = new Date().toLocaleDateString("en-CA");
-  $("planBtn").before(start);
+  const startLabel = document.createElement("label");
+  startLabel.htmlFor = start.id;
+  startLabel.className = "pf-label";
+  startLabel.textContent = "Басталу күні";
+  $("planBtn").before(startLabel, start);
   document.addEventListener(
     "click",
     (event) => {
@@ -490,7 +535,7 @@ export function installEnhancements({
       control.remove();
     };
   }
-  const jobs = button("Аяқталмаған тапсырманы жалғастыру", async () => {
+  const jobs = button("Жалғастыру", async () => {
     const scope = captureSession(),
       page = document.querySelector(".page.on")?.id,
       task = {
@@ -543,7 +588,9 @@ export function installEnhancements({
       new CustomEvent("smart-helper:resume-job", { detail: saved }),
     );
   });
-  options.append(jobs);
+  jobs.setAttribute("aria-label", "Аяқталмаған тапсырманы жалғастыру");
+  jobs.title = "Аяқталмаған тапсырманы жалғастыру";
+  optionActions.append(styleAction(jobs, { name: "resume" }));
   const viewport = window.visualViewport;
   const resize = () =>
     document.documentElement.style.setProperty(

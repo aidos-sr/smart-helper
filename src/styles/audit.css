@@ -32,32 +32,11 @@
 .app-status:empty {
   display: none;
 }
-.library-actions,
 .data-controls {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin: 8px 0;
-}
-.study-options {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 6px 16px;
-  background: var(--sf);
-}
-.study-options input,
-.study-options select {
-  width: auto;
-  max-width: 120px;
-  color: var(--tx);
-  background: var(--sf2);
-  padding: 4px;
-  border: 1px solid var(--bd2);
-}
-.study-options small {
-  color: var(--tx3);
 }
 #quotaStatus {
   color: var(--tx3);
@@ -95,7 +74,8 @@ button[hidden] {
   .footer,
   #bg-canvas,
   .study-options,
-  .library-actions,
+  .material-library,
+  .study-heading-actions,
   button,
   .planner-form,
   .csb,
@@ -132,11 +112,6 @@ button[hidden] {
 
 [hidden] {
   display: none !important;
-}
-.study-options {
-  margin: 12px 0 20px;
-  border: 1px solid var(--bd2);
-  border-radius: 12px;
 }
 #quotaStatus:empty {
   display: none;

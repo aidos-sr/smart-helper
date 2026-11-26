@@ -163,6 +163,118 @@ test("whole app initializes semantic forms, keyboard card, labels and hidden stu
     "false",
   );
 });
+test("material panels keep primary actions visible and guard actions until a material is selected", async () => {
+  for (const id of ["quizSavedSelect", "fcSavedSelect", "planSavedSelect"]) {
+    const select = document.getElementById(id);
+    const panel = select.closest(".material-library");
+    assert.equal(select.hidden, false);
+    assert.equal(select.labels[0].htmlFor, id);
+    const action = (name) =>
+      panel.querySelector(`[data-library-action="${name}"]`);
+    for (const name of ["student", "print"]) {
+      assert.equal(action(name).closest("details"), null);
+    }
+    for (const name of ["rename", "organize", "json", "delete"]) {
+      assert.ok(action(name).closest("details"));
+      assert.equal(action(name).disabled, true);
+    }
+    assert.equal(action("student").disabled, true);
+    assert.equal(action("print").disabled, false);
+    assert.ok(action("delete").classList.contains("sh-button--danger"));
+    select.append(new Option("Selected test material", "design-test"));
+    select.value = "design-test";
+    // A local change updates controls; the app's bubbling listener opens real materials.
+    select.dispatchEvent(new window.Event("change"));
+    assert.equal(action("student").disabled, false);
+    assert.equal(action("rename").disabled, false);
+    select.replaceChildren(new Option("Материалды таңдаңыз", ""));
+    await delay();
+    assert.equal(action("student").disabled, true);
+    assert.equal(action("delete").disabled, true);
+    assert.equal(
+      panel.querySelector(".material-library__count").textContent,
+      "0",
+    );
+  }
+  let printed = 0;
+  const originalPrint = window.print;
+  window.print = () => printed++;
+  document.querySelector('#pg-quiz [data-library-action="print"]').click();
+  await delay();
+  window.print = originalPrint;
+  assert.equal(printed, 1);
+  assert.equal(document.querySelector("#quizSetup .material-library"), null);
+  assert.ok(
+    document.querySelector("#pg-planner .planner-content > .material-library"),
+  );
+  const flashMain = document.querySelector(
+    "#pg-flashcard .study-workspace__main",
+  );
+  assert.ok(flashMain.firstElementChild.matches(".fc-gen-area"));
+  assert.ok(flashMain.lastElementChild.matches(".flashcard-area"));
+});
+test("additional actions close with Escape, outside click and a session change", async () => {
+  const menu = document.querySelector("#pg-quiz .study-action-menu");
+  menu.open = true;
+  document.dispatchEvent(
+    new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+  assert.equal(menu.open, false);
+  assert.equal(document.activeElement, menu.querySelector("summary"));
+  menu.open = true;
+  document.body.click();
+  assert.equal(menu.open, false);
+  menu.open = true;
+  await switchUser(A);
+  assert.equal(menu.open, false);
+});
+test("shared study settings stay below the heading when switching study pages", async () => {
+  const options = document.querySelector(".study-options");
+  for (const page of ["quiz", "flashcard", "planner"]) {
+    document.querySelector(`[data-go="${page}"]`).click();
+    await delay();
+    assert.equal(options.hidden, false);
+    assert.equal(options.parentElement.closest(".page").id, "pg-" + page);
+    assert.ok(options.previousElementSibling.matches(".study-page-heading"));
+    assert.equal(options.closest(".study-page-heading"), null);
+  }
+  for (const id of ["studyGrade", "studyDifficulty", "studyLanguage"]) {
+    assert.equal(document.getElementById(id).labels[0].htmlFor, id);
+  }
+  const resume = options.querySelector(
+    '[aria-label="Аяқталмаған тапсырманы жалғастыру"]',
+  );
+  assert.equal(resume.textContent.trim(), "Жалғастыру");
+  const variant = document.getElementById("studyVariant");
+  const before = variant.value;
+  [...options.querySelectorAll("button")]
+    .find((el) => el.textContent === "Жаңа нұсқа")
+    .click();
+  await delay();
+  assert.notEqual(variant.value, before);
+  variant.value = "";
+});
+test("study cancellation is visible only while generation is active", async () => {
+  for (const [page, triggerId, statusId] of [
+    ["quiz", "quizGenBtn", "quizGenStatus"],
+    ["flashcard", "fcGenBtn", "fcGenStatus"],
+    ["planner", "planBtn", "planStatus"],
+  ]) {
+    const stop = document.querySelector(`#pg-${page} .study-stop-action`);
+    const trigger = document.getElementById(triggerId);
+    const progress = document.getElementById(statusId);
+    assert.equal(stop.hidden, true);
+    trigger.disabled = true;
+    progress.dataset.state = "loading";
+    await delay();
+    assert.equal(stop.hidden, false);
+    progress.dataset.state = "error";
+    await delay();
+    assert.equal(stop.hidden, true);
+    trigger.disabled = false;
+    delete progress.dataset.state;
+  }
+});
 test("late quiz from A cannot render or save under B", async () => {
   await switchUser(A);
   let resolve;
@@ -310,9 +422,32 @@ test("first checked quiz block is usable before the final block arrives", async 
   assert.equal(document.querySelector("#quizActive").style.display, "block");
 });
 
-test('Retry-After prevents a second provider call and card XP requires viewing the answer',async()=>{
- await switchUser(A);const {safeStorage}=await import('../lib/safe-storage.js');safeStorage.removeItem('sh-rate-limit:'+A);let attempts=0;
- aiReply=()=>{attempts++;return Promise.resolve(Response.json({error:'Rate limited',requestId:'test-request'},{status:429,headers:{'retry-after':'1'}}));};
- const {requestAI}=await import('../src/services/ai.js');await assert.rejects(requestAI('fix',{input:'test'}));await assert.rejects(requestAI('fix',{input:'test'}));assert.equal(attempts,1);safeStorage.removeItem('sh-rate-limit:'+A);
- const cards=await import('../src/modules/flashcards.js');cards.initFlashcards();const before=Number(safeStorage.getItem('sh-xp:'+A)||0);cards.fcResult('good');assert.equal(Number(safeStorage.getItem('sh-xp:'+A)||0),before);cards.flipCard();cards.fcResult('good');cards.fcResult('good');assert.equal(Number(safeStorage.getItem('sh-xp:'+A)||0),before+5);
+test("Retry-After prevents a second provider call and card XP requires viewing the answer", async () => {
+  await switchUser(A);
+  const { safeStorage } = await import("../lib/safe-storage.js");
+  safeStorage.removeItem("sh-rate-limit:" + A);
+  let attempts = 0;
+  aiReply = () => {
+    attempts++;
+    return Promise.resolve(
+      Response.json(
+        { error: "Rate limited", requestId: "test-request" },
+        { status: 429, headers: { "retry-after": "1" } },
+      ),
+    );
+  };
+  const { requestAI } = await import("../src/services/ai.js");
+  await assert.rejects(requestAI("fix", { input: "test" }));
+  await assert.rejects(requestAI("fix", { input: "test" }));
+  assert.equal(attempts, 1);
+  safeStorage.removeItem("sh-rate-limit:" + A);
+  const cards = await import("../src/modules/flashcards.js");
+  cards.initFlashcards();
+  const before = Number(safeStorage.getItem("sh-xp:" + A) || 0);
+  cards.fcResult("good");
+  assert.equal(Number(safeStorage.getItem("sh-xp:" + A) || 0), before);
+  cards.flipCard();
+  cards.fcResult("good");
+  cards.fcResult("good");
+  assert.equal(Number(safeStorage.getItem("sh-xp:" + A) || 0), before + 5);
 });
