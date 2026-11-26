@@ -643,3 +643,65 @@ test("mobile navigation and history close through their backdrop or Escape and r
   assert.equal(backdrop.hidden, true);
   assert.equal(document.activeElement.id, "mobbtn");
 });
+
+test("an old day-long browser cooldown cannot block rechecking the deployed provider", async () => {
+  await switchUser(A);
+  const { safeStorage } = await import("../lib/safe-storage.js");
+  const { requestAI } = await import("../src/services/ai.js");
+  const key = "sh-rate-limit:" + A;
+  safeStorage.setItem(key, String(Date.now() + 86400000));
+  let calls = 0;
+  aiReply = async () => {
+    calls++;
+    return json({ text: "Provider is available" });
+  };
+  const result = await requestAI("fix", { input: "Check current provider" });
+  assert.equal(calls, 1);
+  assert.equal(result.text, "Provider is available");
+  assert.equal(safeStorage.getItem(key), null);
+});
+
+test("manual rate-limit rechecks are bounded without extending the local deadline or bypassing the server", async () => {
+  await switchUser(A);
+  const { safeStorage } = await import("../lib/safe-storage.js");
+  const { requestAI } = await import("../src/services/ai.js");
+  const key = "sh-rate-limit:" + A;
+  const realNow = Date.now;
+  let now = realNow(),
+    calls = 0;
+  Date.now = () => now;
+  safeStorage.removeItem(key);
+  aiReply = async () => {
+    calls++;
+    return Response.json(
+      { error: "Daily limit", code: "DAY_LIMIT" },
+      { status: 429, headers: { "retry-after": "86400" } },
+    );
+  };
+  try {
+    await assert.rejects(
+      requestAI("fix", { input: "Rate check" }),
+      (e) => e.code === "DAY_LIMIT",
+    );
+    const stored = safeStorage.getItem(key);
+    assert.equal(JSON.parse(stored).until, now + 60000);
+    now += 500;
+    await assert.rejects(
+      requestAI("fix", { input: "Rate check" }),
+      (e) => e.localRateLimit === true,
+    );
+    assert.equal(safeStorage.getItem(key), stored);
+    assert.equal(calls, 1);
+    now += 60000;
+    await assert.rejects(
+      requestAI("fix", { input: "Rate check" }),
+      (e) => e.code === "DAY_LIMIT",
+    );
+    assert.equal(calls, 2);
+    await delay();
+    assert.equal(calls, 2);
+  } finally {
+    Date.now = realNow;
+    safeStorage.removeItem(key);
+  }
+});

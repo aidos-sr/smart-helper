@@ -103,7 +103,7 @@ export function installEnhancements({
     const scope = captureSession(),
       selector =
         '#sndbtn,[data-action="generate-quiz"],[data-action="generate-flashcards"],[data-action="run-planner"],[data-action="run-tool"]';
-    setTimeout(() => {
+    window.setTimeout(() => {
       if (!scope.valid()) return;
       for (const btn of document.querySelectorAll(selector)) {
         btn.disabled = true;
@@ -112,7 +112,7 @@ export function installEnhancements({
           "Қайта сұрау: " + new Date(detail.until).toLocaleTimeString();
       }
     }, 0);
-    setTimeout(
+    window.setTimeout(
       () => {
         if (!scope.valid()) return;
         for (const btn of document.querySelectorAll(selector))

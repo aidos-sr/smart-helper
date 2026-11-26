@@ -48,24 +48,37 @@ async function scopedRequest(task, payload, handlers, options) {
         },
       ]),
   );
+  const limitKey = "sh-rate-limit:" + operation.userId;
   try {
-    const retryAt = Number(
-      safeStorage.getItem("sh-rate-limit:" + operation.userId) || 0,
-    );
+    const cached = readJSON(limitKey, null);
+    // This cache only prevents rapid repeat clicks. The server remains the
+    // authority for daily/provider limits, which can change after a deployment.
+    // Retire old unversioned deadlines that could lock out a new provider all day.
+    const retryAt =
+      cached?.version === 2 &&
+      Number.isFinite(cached.until) &&
+      cached.until <= Date.now() + 60_000
+        ? cached.until
+        : 0;
+    if (!retryAt || retryAt <= Date.now()) safeStorage.removeItem(limitKey);
     if (retryAt > Date.now())
       throw Object.assign(
         new Error(
-          "Лимит: " +
+          "Сұрау уақытша шектелді. Қайта тексеру: " +
             new Date(retryAt).toLocaleTimeString() +
-            " кейін қайталаңыз",
+            ".",
         ),
-        { retryAfter: Math.ceil((retryAt - Date.now()) / 1000) },
+        {
+          retryAfter: Math.ceil((retryAt - Date.now()) / 1000),
+          localRateLimit: true,
+        },
       );
     const result = await client.send(task, payload, guarded, {
       ...options,
       signal: operation.signal,
     });
     operation.assert();
+    safeStorage.removeItem(limitKey);
     if (task !== "chat") safeStorage.removeItem(key);
     document.dispatchEvent(
       new CustomEvent("smart-helper:quota", { detail: result }),
@@ -77,9 +90,14 @@ async function scopedRequest(task, payload, handlers, options) {
       document.dispatchEvent(
         new CustomEvent("smart-helper:quota", { detail: { remaining } }),
       );
-    if (operation.valid() && error.retryAfter > 0) {
-      const until = Date.now() + error.retryAfter * 1000;
-      safeStorage.setItem("sh-rate-limit:" + operation.userId, String(until));
+    if (
+      operation.valid() &&
+      !error.localRateLimit &&
+      Number.isFinite(error.retryAfter) &&
+      error.retryAfter > 0
+    ) {
+      const until = Date.now() + Math.min(60, error.retryAfter) * 1000;
+      safeStorage.setItem(limitKey, JSON.stringify({ version: 2, until }));
       document.dispatchEvent(
         new CustomEvent("smart-helper:rate-limit", { detail: { until } }),
       );
