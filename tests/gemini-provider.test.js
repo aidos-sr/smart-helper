@@ -142,3 +142,18 @@ test("Gemini quota errors are sanitized, terminal and isolated from router coold
   cooldowns.set("gemini:all", Date.now() + 10000);
   assert.throws(() => checkProviderCooldown(cooldowns, request.model));
 });
+
+test("in-stream Gemini quota errors retain provider scope and stop retries", async () => {
+  process.env.AI_PROVIDER = "gemini";
+  globalThis.fetch = async () =>
+    new Response(
+      'data: {"error":{"code":429,"message":"private request details"}}\n\n',
+    );
+  const response = await requestAICompletion({ ...request, stream: true });
+  await assert.rejects(response.text(), (error) => {
+    assert.equal(error.cooldownKey, "gemini:all");
+    assert.equal(error.stopRetries, true);
+    assert.ok(!error.message.includes("private"));
+    return true;
+  });
+});
