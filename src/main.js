@@ -1,4 +1,11 @@
-import { hasAuthCallback } from "../lib/auth-callback.js";
+import { hasAuthCallback, authCallbackError } from "../lib/auth-callback.js";
+import {
+  authActions,
+  configureAuthInitializer,
+  authErrorMessage,
+} from "./services/auth.js";
+import { installAuthControls } from "./ui/auth-controls.js";
+import { installMobileControls } from "./ui/mobile-controls.js";
 import "./compat.js";
 import { paginateChatMessages } from "../lib/chat-pages.js";
 import { safeStorage as localStorage } from "../lib/safe-storage.js";
@@ -29,13 +36,17 @@ initBackground();
 /* ═══ CONFIG ═══ */
 let supabaseClient = null;
 let currentUser = null;
+let authControls = null;
 let activeChatController = null,
   authRequested = false;
 let intendedPage = location.hash.slice(1);
 
 async function initSupabase() {
   supabaseClient = await initializeSupabase(applyAuthSession);
+  document.getElementById("authReconnect")?.setAttribute("hidden", "");
+  authControls?.refreshAvailability({ force: true });
 }
+configureAuthInitializer(initSupabase);
 
 /* ═══ THEME ═══ */
 const tbtn = document.getElementById("tbtn");
@@ -210,19 +221,9 @@ document.getElementById("loutbtn").onclick = async () => {
 
 /* ═══ AUTH FORMS ═══ */
 function atab(tab) {
-  const isL = tab === "login";
-  const tL = document.getElementById("tabL");
-  const tR = document.getElementById("tabR");
-  if (tL) {
-    tL.style.background = isL ? "rgba(0,212,255,.1)" : "transparent";
-    tL.style.color = isL ? "var(--ac)" : "var(--tx2)";
-    tL.style.fontWeight = isL ? "700" : "500";
-    tR.style.background = !isL ? "rgba(0,212,255,.1)" : "transparent";
-    tR.style.color = !isL ? "var(--ac)" : "var(--tx2)";
-    tR.style.fontWeight = !isL ? "700" : "500";
-  }
-  document.getElementById("fL").style.display = isL ? "block" : "none";
-  document.getElementById("fR").style.display = isL ? "none" : "block";
+  document.dispatchEvent(
+    new CustomEvent("smart-helper:auth-view", { detail: tab }),
+  );
 }
 async function doLogin() {
   const e = document.getElementById("lE").value.trim(),
@@ -236,11 +237,10 @@ async function doLogin() {
   setbl("lBtn", true, "Кіру");
   try {
     if (!supabaseClient) await initSupabase();
-    const { error } = await supabaseClient.auth.signInWithPassword({
+    await authActions.login({
       email: e,
       password: p,
     });
-    if (error) throw error;
     go(
       intendedPage && !["auth", "about"].includes(intendedPage)
         ? intendedPage
@@ -253,6 +253,7 @@ async function doLogin() {
   setbl("lBtn", false, "Кіру");
 }
 async function doReg() {
+  const scope = captureSession();
   const n = document.getElementById("rN").value.trim(),
     e = document.getElementById("rE").value.trim(),
     p = document.getElementById("rP").value;
@@ -262,53 +263,50 @@ async function doReg() {
     err.textContent = "Барлық өрісті толтырыңыз";
     return;
   }
-  if (p.length < 6) {
-    err.textContent = "Кемінде 6 символ";
+  if (p.length < 8) {
+    err.textContent = "Кемінде 8 таңба";
     return;
   }
   setbl("rBtn", true, "Тіркелу");
   try {
     if (!supabaseClient) await initSupabase();
-    const { data, error } = await supabaseClient.auth.signUp({
+    scope.assert();
+    const data = await authActions.register({
       email: e,
       password: p,
       options: {
         data: { display_name: n, full_name: n },
-        emailRedirectTo: window.location.origin,
       },
     });
-    if (error) throw error;
     if (data.session) go("chat");
-    else err.textContent = "Email-ге келген растау сілтемесін ашыңыз";
+    else {
+      scope.assert();
+      document.dispatchEvent(
+        new CustomEvent("smart-helper:confirmation", { detail: { email: e } }),
+      );
+    }
   } catch (ex) {
-    err.textContent = autherr(ex);
+    if (scope.valid()) err.textContent = autherr(ex);
   }
   setbl("rBtn", false, "Тіркелу");
+  authControls?.refreshMailButtons();
 }
 async function doGoogle() {
+  const button = document.getElementById("googleBtn");
+  if (button?.disabled) return;
+  if (button) button.disabled = true;
   try {
     if (!supabaseClient) await initSupabase();
-    const { error } = await supabaseClient.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin },
-    });
-    if (error) throw error;
+    await authActions.google();
   } catch (ex) {
     const el = document.getElementById("lErr");
     if (el) el.textContent = autherr(ex);
+  } finally {
+    if (button) button.disabled = false;
+    await authControls?.refreshAvailability();
   }
 }
-const autherr = (error) =>
-  ({
-    invalid_credentials: "Email немесе құпия сөз қате",
-    email_not_confirmed: "Алдымен email адресіңізді растаңыз",
-    user_already_exists: "Email бұрын тіркелген",
-    weak_password: "Құпия сөз тым қарапайым",
-    validation_failed: "Email форматы дұрыс емес",
-    over_email_send_rate_limit: "Хаттар тым жиі жіберілді. Кейінірек көріңіз.",
-  })[error?.code] ||
-  error?.message ||
-  "Қате орын алды";
+const autherr = authErrorMessage;
 const setbl = (id, l, t) => {
   const b = document.getElementById(id);
   b.disabled = l;
@@ -1231,7 +1229,15 @@ installEnhancements({
   stopChat: () => activeChatController?.abort(),
   loadHistory: () => loadHistory(true),
 });
-if (
+authControls = installAuthControls({ onRecovered: () => go("chat") });
+installMobileControls(closeMenus);
+const callbackFailure = authCallbackError(location);
+if (callbackFailure) {
+  history.replaceState({}, "", location.pathname + "#auth");
+  go("auth");
+  document.getElementById("lErr").textContent =
+    authErrorMessage(callbackFailure);
+} else if (
   hasAuthCallback(location) ||
   localStorage.keys().some((key) => /^sb-.*-auth-token$/.test(key))
 )
@@ -1246,6 +1252,7 @@ function showConnectionError(error) {
   if (element)
     element.textContent =
       "Байланыс орнатылмады. Интернетті тексеріп, «Қайта қосылу» басыңыз.";
+  document.getElementById("authReconnect")?.removeAttribute("hidden");
 }
 
 function closeMenus() {
@@ -1281,6 +1288,8 @@ function moveStudyOptions(page) {
     !currentUser || !["quiz", "planner", "flashcard"].includes(page);
   if (!options.hidden)
     document
-      .querySelector("#pg-" + page + " .study-page-heading, #pg-" + page + " .st")
+      .querySelector(
+        "#pg-" + page + " .study-page-heading, #pg-" + page + " .st",
+      )
       .after(options);
 }

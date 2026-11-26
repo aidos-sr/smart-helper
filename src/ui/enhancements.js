@@ -1,4 +1,4 @@
-import { requestAccount, updatePassword } from "../services/account.js";
+import { requestAccount } from "../services/account.js";
 const cancelModules = {
   quiz: () => import("../modules/quiz.js"),
   flashcards: () => import("../modules/flashcards.js"),
@@ -459,60 +459,10 @@ export function installEnhancements({
     },
     true,
   );
-  $("fL").append(
-    button("Құпия сөзді ұмыттыңыз ба?", async () => {
-      const email = $("lE").value.trim();
-      if (!$("lE").reportValidity() || !email) {
-        $("lE").focus();
-        return;
-      }
-      const { error } = await getClient().auth.resetPasswordForEmail(email, {
-        redirectTo: location.origin + "/#recovery",
-      });
-      if (error) throw error;
-      status("Егер email тіркелсе, қалпына келтіру хаты жіберіледі.");
-    }),
-    button("Қайта қосылу", initSupabase),
-  );
-  const recovery = document.createElement("form");
-  recovery.id = "recoveryForm";
-  recovery.hidden = true;
-  recovery.innerHTML =
-    '<label for="newPassword">Жаңа құпия сөз</label><input id="newPassword" type="password" autocomplete="new-password" minlength="8" required><button type="submit" class="bpri">Сақтау</button>';
-  let recoveryScope = null;
-  onSessionReset(() => {
-    recoveryScope = null;
-    recovery.hidden = true;
-    $("newPassword").value = "";
-  });
-  recovery.onsubmit = async (event) => {
-    event.preventDefault();
-    const scope = recoveryScope,
-      button = recovery.querySelector("button");
-    button.disabled = true;
-    try {
-      await updatePassword($("newPassword").value, scope);
-      scope.assert();
-      recovery.hidden = true;
-      $("newPassword").value = "";
-      status("Құпия сөз өзгертілді");
-    } catch (error) {
-      if (scope?.valid()) status(error.message);
-    } finally {
-      button.disabled = false;
-    }
-  };
-  $("fL").after(recovery);
-  document.addEventListener("smart-helper:recovery", () => {
-    recoveryScope = captureSession();
-    document
-      .querySelectorAll(".page,.chatwrap")
-      .forEach((el) => el.classList.remove("on"));
-    $("pg-auth").classList.add("on");
-    $("fL").style.display = "none";
-    $("fR").style.display = "none";
-    recovery.hidden = false;
-  });
+  const reconnect = button("Қайта қосылу", initSupabase);
+  reconnect.id = "authReconnect";
+  reconnect.hidden = true;
+  $("fL").append(reconnect);
   for (const [id, action, buttonId] of [
     ["fL", "login", "lBtn"],
     ["fR", "register", "rBtn"],
