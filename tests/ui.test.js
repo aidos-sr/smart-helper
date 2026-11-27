@@ -239,13 +239,22 @@ test("additional actions close with Escape, outside click and a session change",
 });
 test("shared study settings stay below the heading when switching study pages", async () => {
   const options = document.querySelector(".study-options");
-  for (const page of ["quiz", "flashcard", "planner"]) {
+  const difficulty = document.getElementById("studyDifficulty");
+  difficulty.value = "hard";
+  for (const page of ["quiz", "planner", "flashcard", "planner", "quiz"]) {
     document.querySelector(`[data-go="${page}"]`).click();
     await delay();
     assert.equal(options.hidden, false);
     assert.equal(options.parentElement.closest(".page").id, "pg-" + page);
     assert.ok(options.previousElementSibling.matches(".study-page-heading"));
     assert.equal(options.closest(".study-page-heading"), null);
+    assert.equal(difficulty.closest(".study-field").hidden, page === "planner");
+    assert.equal(difficulty.disabled, page === "planner");
+    assert.equal(difficulty.value, "hard");
+    assert.equal(
+      document.getElementById("studyLanguage").closest(".study-field").hidden,
+      false,
+    );
   }
   for (const id of ["studyDifficulty", "studyLanguage"]) {
     assert.equal(document.getElementById(id).labels[0].htmlFor, id);
@@ -262,6 +271,42 @@ test("shared study settings stay below the heading when switching study pages", 
   await delay();
   assert.notEqual(variant.value, before);
   variant.value = "";
+});
+
+test("new plans omit shared difficulty while legacy resumes keep their original payload", async () => {
+  await switchUser(A);
+  const planner = await import("../src/modules/planner.js");
+  const payloads = [];
+  document.getElementById("planTopic").value = "Алгебра";
+  document.getElementById("planDays").value = "1";
+  document.getElementById("planHours").value = "2";
+  document.getElementById("studyDifficulty").value = "hard";
+  document.getElementById("studyLanguage").value = "kk";
+  aiReply = async (init) => {
+    payloads.push(JSON.parse(init.body));
+    return json({
+      data: {
+        days: [{ day: 1, title: "Кіріспе", tasks: "Есеп шығар", subject: "math" }],
+      },
+    });
+  };
+  await planner.runPlanner();
+  assert.equal(payloads.length, 1);
+  assert.equal(Object.hasOwn(payloads[0], "difficulty"), false);
+  assert.equal(payloads[0].language, "kk");
+  const operationId = crypto.randomUUID();
+  await planner.runPlanner(operationId, undefined, "easy");
+  assert.equal(payloads.length, 2);
+  assert.equal(payloads[1].operationId, operationId);
+  assert.equal(payloads[1].difficulty, "easy");
+  assert.equal(document.getElementById("studyDifficulty").value, "hard");
+  const { restoreStudyOptions } = await import("../src/utils/study-view.js");
+  restoreStudyOptions(
+    { specification: { difficulty: "easy", language: "ru" } },
+    { restoreDifficulty: false },
+  );
+  assert.equal(document.getElementById("studyDifficulty").value, "hard");
+  assert.equal(document.getElementById("studyLanguage").value, "ru");
 });
 test("study cancellation is visible only while generation is active", async () => {
   for (const [page, triggerId, statusId] of [

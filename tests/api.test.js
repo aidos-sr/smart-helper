@@ -376,6 +376,7 @@ test("public configuration reports uncapped mode unless usage caps are explicitl
 
 test("30-day planner streams six small batches with progress and consumes one quota", async () => {
   modelResponse = (request) => {
+    assert.ok(!request.messages[0].content.includes("Күрделілік:"));
     const count = getSchema(request).properties.days.minItems;
     const start = Number(
       request.messages.at(-1).content.match(/(\d+)–\d+ күндеріне/)[1],
@@ -392,6 +393,7 @@ test("30-day planner streams six small batches with progress and consumes one qu
   const res = await invoke({
     task: "planner",
     topic: "Алгебра",
+    difficulty: "hard", // Old clients remain compatible without influencing the plan prompt.
     days: 30,
     hours: 2,
     stream: true,

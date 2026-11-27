@@ -38,7 +38,7 @@ export function initPlanner() {
   });
 }
 
-export async function runPlanner(operationId, legacyGrade) {
+export async function runPlanner(operationId, legacyGrade, legacyDifficulty) {
   const topic = document.getElementById("planTopic").value.trim();
   const goal = document.getElementById("planGoal").value.trim();
   const days = document.getElementById("planDays").value;
@@ -66,7 +66,7 @@ export async function runPlanner(operationId, legacyGrade) {
       goal,
       days: Number(days),
       hours: Number(hours),
-      ...studyOptions(legacyGrade),
+      ...studyOptions(legacyGrade, legacyDifficulty),
     };
     const response = await requestAI("planner", specification, {
       signal,
@@ -133,7 +133,7 @@ export async function loadSavedPlan() {
   try {
     const saved = await readSelectedMaterial("planSavedSelect");
     if (selectedVersion !== generationVersion || !selectedScope.valid()) return;
-    if (saved) restoreStudyOptions(saved);
+    if (saved) restoreStudyOptions(saved, { restoreDifficulty: false });
     if (!Array.isArray(saved?.days) || !saved.days.length) return;
     activePlan = saved;
     document.getElementById("planDays").value = saved.days.length;
@@ -244,11 +244,12 @@ function renderPlan(days, result) {
   });
 }
 
-function studyOptions(legacyGrade) {
+function studyOptions(legacyGrade, legacyDifficulty) {
   return {
     variant: document.getElementById("studyVariant")?.value || "",
     ...(legacyGrade ? { grade: legacyGrade } : {}),
-    difficulty: document.getElementById("studyDifficulty")?.value || "medium",
+    // Preserve old job signatures only when resuming an existing operation.
+    ...(legacyDifficulty ? { difficulty: legacyDifficulty } : {}),
     language: document.getElementById("studyLanguage")?.value || "kk",
   };
 }

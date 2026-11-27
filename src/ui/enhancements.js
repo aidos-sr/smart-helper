@@ -595,7 +595,11 @@ export function installEnhancements({
       ["language", "studyLanguage"],
       ["variant", "studyVariant"],
     ])
-      if (saved.payload[key] !== undefined) $(id).value = saved.payload[key];
+      if (
+        saved.payload[key] !== undefined &&
+        !(task === "planner" && key === "difficulty")
+      )
+        $(id).value = saved.payload[key];
     document.dispatchEvent(
       new CustomEvent("smart-helper:resume-job", { detail: saved }),
     );
