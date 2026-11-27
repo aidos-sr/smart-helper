@@ -498,6 +498,15 @@ async function authenticate(req) {
 }
 
 async function consumeQuota(uid) {
+  // Legacy numeric settings alone must not re-enable per-user usage caps.
+  if (process.env.AI_USAGE_LIMITS_ENABLED !== "true") {
+    return {
+      allowed: true,
+      unlimited: true,
+      minuteRemaining: null,
+      dailyRemaining: null,
+    };
+  }
   const reservedAt = Date.now();
   const minuteLimit = asBoundedInt(process.env.AI_MINUTE_LIMIT, 1, 100, 10);
   const dailyLimit = asBoundedInt(process.env.AI_DAILY_LIMIT, 1, 10_000, 50);
@@ -526,6 +535,7 @@ async function consumeQuota(uid) {
 
 async function refundQuota(uid, reservation) {
   if (!reservation?.allowed) return;
+  if (reservation.unlimited) return { day: null, minute: null };
   if (reservation.refunded) return reservation.refunded;
   if (reservation.refundPromise) return reservation.refundPromise;
   reservation.refundPromise = withDeadline(

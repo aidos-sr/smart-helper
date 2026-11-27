@@ -18,5 +18,9 @@ export default function handler(req, res) {
     return json(res, 503, { error: 'Supabase әлі бапталмаған' });
   }
 
-  return json(res, 200, { supabaseUrl: url, supabasePublishableKey: publishableKey });
+  return json(res, 200, {
+    supabaseUrl: url,
+    supabasePublishableKey: publishableKey,
+    aiUsageLimitsEnabled: process.env.AI_USAGE_LIMITS_ENABLED === 'true',
+  });
 }

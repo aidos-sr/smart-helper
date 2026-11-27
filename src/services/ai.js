@@ -51,11 +51,10 @@ async function scopedRequest(task, payload, handlers, options) {
   const limitKey = "sh-rate-limit:" + operation.userId;
   try {
     const cached = readJSON(limitKey, null);
-    // This cache only prevents rapid repeat clicks. The server remains the
-    // authority for daily/provider limits, which can change after a deployment.
-    // Retire old unversioned deadlines that could lock out a new provider all day.
+    // Keep short waits from current server/provider responses, while retiring
+    // old deadlines from deployments that enforced daily and minute usage caps.
     const retryAt =
-      cached?.version === 2 &&
+      cached?.version === 3 &&
       Number.isFinite(cached.until) &&
       cached.until <= Date.now() + 60_000
         ? cached.until
@@ -97,7 +96,7 @@ async function scopedRequest(task, payload, handlers, options) {
       error.retryAfter > 0
     ) {
       const until = Date.now() + Math.min(60, error.retryAfter) * 1000;
-      safeStorage.setItem(limitKey, JSON.stringify({ version: 2, until }));
+      safeStorage.setItem(limitKey, JSON.stringify({ version: 3, until }));
       document.dispatchEvent(
         new CustomEvent("smart-helper:rate-limit", { detail: { until } }),
       );
