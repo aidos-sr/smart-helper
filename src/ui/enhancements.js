@@ -230,8 +230,14 @@ export function installEnhancements({
       ![remaining.day, remaining.minute].every(
         (n) => Number.isInteger(n) && n >= 0,
       )
-    )
+    ) {
+      for (const node of quotaViews) {
+        node.replaceChildren();
+        node.hidden = true;
+        node.removeAttribute("aria-label");
+      }
       return;
+    }
     for (const node of quotaViews) {
       node.replaceChildren();
       node.setAttribute(

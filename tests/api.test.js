@@ -25,6 +25,8 @@ const stream = (text, finish = "stop") =>
 const json = (value) => Response.json(value);
 
 beforeEach(() => {
+  // Legacy opt-in quota coverage stays explicit; production defaults to no caps.
+  process.env.AI_USAGE_LIMITS_ENABLED = "true";
   requests = [];
   refunds = 0;
   reservations = 0;
@@ -97,6 +99,9 @@ beforeEach(() => {
 });
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  delete process.env.AI_USAGE_LIMITS_ENABLED;
+  delete process.env.AI_MINUTE_LIMIT;
+  delete process.env.AI_DAILY_LIMIT;
 });
 
 class ResponseMock extends EventEmitter {
@@ -282,6 +287,91 @@ const question = (i) => ({
   opts: ["Бір", "Екі", "Үш", "Төрт"],
   correct: 0,
   explanation: "Бір — дұрыс жауап.",
+});
+
+test("personal daily and minute caps are disabled by default for chat, tools and quizzes", async () => {
+  delete process.env.AI_USAGE_LIMITS_ENABLED;
+  process.env.AI_MINUTE_LIMIT = "1";
+  process.env.AI_DAILY_LIMIT = "1";
+  const testFetch = globalThis.fetch;
+  let guardedAttempts = 0;
+  globalThis.fetch = (url, init) => {
+    assert.ok(!String(url).includes("/rpc/consume_ai_quota"));
+    assert.ok(!String(url).includes("/rest/v1/ai_usage"));
+    if (String(url).includes("/rpc/reserve_ai_attempt")) guardedAttempts++;
+    return testFetch(url, init);
+  };
+  modelResponse = (request) =>
+    request.response_format
+      ? completeJSON({ questions: [question(1), question(2), question(3)] })
+      : stream("Дайын");
+  for (const body of [
+    chat,
+    { task: "fix", input: "Мәтін", stream: true },
+    { task: "quiz", topic: "Логика", count: 3, stream: true },
+  ]) {
+    const response = await invoke(body);
+    assert.equal(response.statusCode, 200);
+    const done = events(response).at(-1);
+    assert.equal(done.type, "done");
+    assert.deepEqual(done.remaining, { day: null, minute: null });
+  }
+  assert.equal(reservations, 0);
+  assert.equal(refunds, 0);
+  assert.equal(requests.length, 3);
+  assert.ok(guardedAttempts >= 6);
+});
+
+test("uncapped requests preserve provider waits without touching usage quota or refunds", async () => {
+  delete process.env.AI_USAGE_LIMITS_ENABLED;
+  modelResponse = () =>
+    Response.json(
+      { error: { code: 429, message: "Provider capacity exhausted" } },
+      { status: 429, headers: { "retry-after": "43" } },
+    );
+  const response = await invoke(chat);
+  const error = events(response).at(-1);
+  assert.equal(error.type, "error");
+  assert.equal(error.retryAfter, 43);
+  assert.deepEqual(error.remaining, { day: null, minute: null });
+  assert.equal(requests.length, 1);
+  assert.equal(reservations, 0);
+  assert.equal(refunds, 0);
+});
+
+test("uncapped mode still requires authentication and respects anti-spam admission", async () => {
+  delete process.env.AI_USAGE_LIMITS_ENABLED;
+  assert.equal((await invoke(chat, {})).statusCode, 401);
+  const testFetch = globalThis.fetch;
+  globalThis.fetch = (url, init) =>
+    String(url).includes("/rpc/reserve_ai_attempt")
+      ? Promise.resolve(json({ allowed: false, reason: "ATTEMPT_LIMIT" }))
+      : testFetch(url, init);
+  const response = await invoke(chat);
+  assert.equal(response.statusCode, 429);
+  assert.equal(response.payload.code, "ATTEMPT_LIMIT");
+  assert.equal(requests.length, 0);
+  assert.equal(reservations, 0);
+});
+
+test("public configuration reports uncapped mode unless usage caps are explicitly enabled", async () => {
+  const { default: config } = await import("../api/config.js");
+  const oldKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+  process.env.SUPABASE_PUBLISHABLE_KEY = "test-public-key";
+  try {
+    for (const enabled of [false, true]) {
+      if (enabled) process.env.AI_USAGE_LIMITS_ENABLED = "true";
+      else delete process.env.AI_USAGE_LIMITS_ENABLED;
+      const response = new ResponseMock();
+      config({ method: "GET" }, response);
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.payload.aiUsageLimitsEnabled, enabled);
+      assert.equal(response.payload.supabaseSecretKey, undefined);
+    }
+  } finally {
+    if (oldKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY;
+    else process.env.SUPABASE_PUBLISHABLE_KEY = oldKey;
+  }
 });
 
 test("30-day planner streams six small batches with progress and consumes one quota", async () => {

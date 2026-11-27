@@ -491,6 +491,27 @@ test("a failed streamed request refreshes the visible quota with its restored ba
   }
 });
 
+test("uncapped responses clear every desktop and mobile quota counter instead of displaying zero", async () => {
+  await switchUser(A);
+  document.dispatchEvent(
+    new CustomEvent("smart-helper:quota", {
+      detail: { remaining: { day: 50, minute: 10 } },
+    }),
+  );
+  assert.equal(document.getElementById("quotaStatus").hidden, false);
+  const { safeStorage } = await import("../lib/safe-storage.js");
+  safeStorage.removeItem("sh-rate-limit:" + A);
+  aiReply = async () =>
+    json({ text: "Дайын", remaining: { day: null, minute: null } });
+  const { requestAI } = await import("../src/services/ai.js");
+  await requestAI("fix", { input: "Лимитсіз сұрау" });
+  for (const view of document.querySelectorAll(".quota-summary")) {
+    assert.equal(view.hidden, true);
+    assert.equal(view.textContent, "");
+    assert.equal(view.hasAttribute("aria-label"), false);
+  }
+});
+
 test("registration shows an inbox confirmation state and does not send duplicate emails", async () => {
   const { safeStorage } = await import("../lib/safe-storage.js");
   safeStorage.removeItem("sh-auth-mail-until:localhost");
@@ -644,21 +665,26 @@ test("mobile navigation and history close through their backdrop or Escape and r
   assert.equal(document.activeElement.id, "mobbtn");
 });
 
-test("an old day-long browser cooldown cannot block rechecking the deployed provider", async () => {
+test("legacy browser cooldowns cannot preserve caps removed by a new deployment", async () => {
   await switchUser(A);
   const { safeStorage } = await import("../lib/safe-storage.js");
   const { requestAI } = await import("../src/services/ai.js");
   const key = "sh-rate-limit:" + A;
-  safeStorage.setItem(key, String(Date.now() + 86400000));
   let calls = 0;
   aiReply = async () => {
     calls++;
     return json({ text: "Provider is available" });
   };
-  const result = await requestAI("fix", { input: "Check current provider" });
-  assert.equal(calls, 1);
-  assert.equal(result.text, "Provider is available");
-  assert.equal(safeStorage.getItem(key), null);
+  for (const cached of [
+    String(Date.now() + 86400000),
+    JSON.stringify({ version: 2, until: Date.now() + 30000 }),
+  ]) {
+    safeStorage.setItem(key, cached);
+    const result = await requestAI("fix", { input: "Check current provider" });
+    assert.equal(result.text, "Provider is available");
+    assert.equal(safeStorage.getItem(key), null);
+  }
+  assert.equal(calls, 2);
 });
 
 test("manual rate-limit rechecks are bounded without extending the local deadline or bypassing the server", async () => {
