@@ -187,6 +187,15 @@ test("handler falls back after an empty provider without sending headers twice",
   const res = await invoke(chat);
   assert.equal(requests.length, 2);
   assert.equal(events(res).at(-1).type, "done");
+  for (const request of requests) {
+    assert.equal(request.messages[0].role, "system");
+    assert.ok(
+      request.messages[0].content.includes("Айдос пен Нурасыл"),
+    );
+    assert.ok(
+      request.messages[0].content.includes("базалық модельді өзі оқытты деп айтпа"),
+    );
+  }
 });
 test("handler rejects unauthenticated and overlong input before charging quota", async () => {
   assert.equal((await invoke(chat, {})).statusCode, 401);
@@ -807,6 +816,12 @@ test("Gemini handles chat and study tools without an OpenRouter key", async () =
         (e) => e.type === "done" && e.text === "Gemini response",
       ),
     );
+    const identity = native[0].systemInstruction.parts
+      .map((p) => p.text)
+      .join("\n");
+    assert.ok(identity.includes("Айдос пен Нурасыл"));
+    assert.ok(identity.includes("Айдос и Нурасыл"));
+    assert.ok(identity.includes("Gemini моделін Google әзірлеген"));
     const tool = await invoke({
       task: "fix",
       input: "Some text",
