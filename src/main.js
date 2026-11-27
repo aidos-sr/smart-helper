@@ -1261,7 +1261,7 @@ document.addEventListener("smart-helper:resume-job", async ({ detail }) => {
     const m = await import("./modules/flashcards.js");
     m.resumeFlashcards(detail.payload, detail.id);
   } else if (detail.task === "planner")
-    runPlanner(detail.id, detail.payload.grade);
+    runPlanner(detail.id, detail.payload.grade, detail.payload.difficulty);
 });
 
 function moveStudyOptions(page) {
@@ -1269,6 +1269,9 @@ function moveStudyOptions(page) {
   if (!options) return;
   options.hidden =
     !currentUser || !["quiz", "planner", "flashcard"].includes(page);
+  const difficulty = document.getElementById("studyDifficulty");
+  difficulty.closest(".study-field").hidden = page === "planner";
+  difficulty.disabled = page === "planner";
   if (!options.hidden)
     document
       .querySelector(
